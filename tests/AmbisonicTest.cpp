@@ -61,6 +61,7 @@ namespace {
         float minAzimuth = 1000.f, maxAzimuth = -1000.f;
         float minElevation = 1000.f, maxElevation = -1000.f;
         float intensityAzimuthRange = 0.f;
+        float meanIntensityAzimuth = 0.f;
         std::vector<double> channelEnergy;
         bool finite = true;
     };
@@ -99,6 +100,7 @@ namespace {
 
         const auto totalBlocks = (int64_t) (seconds * sampleRate / blockSize);
         double intensityX = 0.0, intensityY = 0.0;
+        double totalIntensityX = 0.0, totalIntensityY = 0.0;
         float minIntensityAzimuth = 1000.f, maxIntensityAzimuth = -1000.f;
         const auto blockDurationMs = 1000.0 * blockSize / sampleRate;
         auto start = juce::Time::getMillisecondCounterHiRes();
@@ -137,6 +139,8 @@ namespace {
                 for (int i = 0; i < blockSize; ++i) {
                     intensityX += buffer.getSample(0, i) * buffer.getSample(3, i);
                     intensityY += buffer.getSample(0, i) * buffer.getSample(1, i);
+                    totalIntensityX += buffer.getSample(0, i) * buffer.getSample(3, i);
+                    totalIntensityY += buffer.getSample(0, i) * buffer.getSample(1, i);
                 }
                 if (block % 24 == 0) {
                     if (std::abs(intensityX) + std::abs(intensityY) > 1.0e-6) {
@@ -149,6 +153,7 @@ namespace {
             }
         }
         result.intensityAzimuthRange = maxIntensityAzimuth - minIntensityAzimuth;
+        result.meanIntensityAzimuth = (float) juce::radiansToDegrees(std::atan2(totalIntensityY, totalIntensityX));
         processor->releaseResources();
         return result;
     }
@@ -283,6 +288,12 @@ int main(int argc, char* argv[]) {
     check(ambi.maxElevation <= 90.f && ambi.minElevation >= -90.f, "elevation stays in range");
     check(ambi.intensityAzimuthRange > 20.f, "movement is audible in the encoded signal (intensity azimuth range "
                                               + juce::String(ambi.intensityAzimuthRange, 1) + ")");
+
+    std::cout << "third order AmbiX output, default parameters" << std::endl;
+    auto defaults = run(juce::AudioChannelSet::ambisonic(3), 10.0, false);
+    std::cout << "        mean intensity azimuth " << defaults.meanIntensityAzimuth
+              << ", Y/W energy " << defaults.channelEnergy[1] / defaults.channelEnergy[0] << std::endl;
+    check(std::abs(defaults.meanIntensityAzimuth) < 45.f, "field is centred in front, not pulled to one side");
 
     std::cout << "first order AmbiX output" << std::endl;
     auto firstOrder = run(juce::AudioChannelSet::ambisonic(1), 4.0, false);

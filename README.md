@@ -91,6 +91,8 @@ cmake . -B cmake-build
 cmake --build cmake-build --config Release
 ```
 
+**ASIO (Windows standalone):** Download the [Steinberg ASIO SDK](https://www.steinberg.net/developers/) and unpack it so that `modules/asiosdk/common/iasiodrv.h` exists. Alternatively, pass `-DSCYCLONE_ASIO_SDK_PATH=<path>` to the first CMake call. CMake then reports "ASIO enabled" and the standalone lists ASIO under its audio settings. Without the SDK, the plugin builds as before, without ASIO.
+
 **Notes:** 
 - The onnx library is now linked statically. No more need to download the onnx library via homebrew or via the github repository. Also the binaries are now notarized.
 - For Windows at the moment only release builds are supported. Debug builds will be supported with future updates.

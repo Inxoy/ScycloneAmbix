@@ -122,6 +122,20 @@ target_compile_definitions(${TARGET_NAME}
 
 target_include_directories(${TARGET_NAME} PRIVATE ${CMAKE_CURRENT_LIST_DIR}/modules/onnxruntime/include)
 
+# ASIO for the Windows standalone. The Steinberg ASIO SDK is not part of this repository,
+# download it from https://www.steinberg.net/developers/ and unpack it to modules/asiosdk
+# or point SCYCLONE_ASIO_SDK_PATH to it.
+if (WIN32)
+	set(SCYCLONE_ASIO_SDK_PATH "${CMAKE_CURRENT_LIST_DIR}/modules/asiosdk" CACHE PATH "Path to the Steinberg ASIO SDK")
+	if (EXISTS "${SCYCLONE_ASIO_SDK_PATH}/common/iasiodrv.h")
+		message(STATUS "ASIO SDK found at ${SCYCLONE_ASIO_SDK_PATH}, ASIO enabled")
+		target_compile_definitions(${TARGET_NAME} PUBLIC JUCE_ASIO=1)
+		target_include_directories(${TARGET_NAME} PRIVATE "${SCYCLONE_ASIO_SDK_PATH}/common")
+	else()
+		message(STATUS "ASIO SDK not found at ${SCYCLONE_ASIO_SDK_PATH}, building without ASIO")
+	endif()
+endif()
+
 # Add the onnxruntime library
 add_library(onnxruntime STATIC IMPORTED)
 

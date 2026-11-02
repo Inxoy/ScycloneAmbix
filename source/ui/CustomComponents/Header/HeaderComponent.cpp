@@ -70,6 +70,16 @@ HeaderComponent::HeaderComponent(AudioPluginAudioProcessor &p, juce::AudioProces
     };
 
     detailButton.setColour(juce::DrawableButton::ColourIds::backgroundOnColourId, juce::Colours::transparentBlack);
+
+    spatialButton.setClickingTogglesState(true);
+    spatialButton.setColour(juce::TextButton::buttonColourId, juce::Colour::fromString(ColorPallete::BUTTON_GRAY));
+    spatialButton.setColour(juce::TextButton::buttonOnColourId, juce::Colour {0x73F02FC2});
+    spatialButton.setColour(juce::TextButton::textColourOffId, juce::Colour::fromString(ColorPallete::TEXT2));
+    spatialButton.setColour(juce::TextButton::textColourOnId, juce::Colour::fromString(ColorPallete::WHITE));
+    spatialButton.onClick = [this] () {
+        if (onSpatialViewChange) onSpatialViewChange(spatialButton.getToggleState());
+    };
+    addAndMakeVisible(spatialButton);
     this->setInterceptsMouseClicks(true, true);
 }
 
@@ -81,6 +91,7 @@ HeaderComponent::~HeaderComponent() {
 void HeaderComponent::resized() {
     labels.vaeSynth.setBounds(49, 21, 127, 30);
     labels.neutralTransfer.setBounds(208, 29, 121, 19);
+    spatialButton.setBounds(860, 21, 80, 24);
     labels.inputGainLabel.setBounds(950, 21, 95, 24);
     inputGainSlider.setBounds(1050, 21, 73, 24);
     labels.outputGainLabel.setBounds(1125, 21, 95, 24);

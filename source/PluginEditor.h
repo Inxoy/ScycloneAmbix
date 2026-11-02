@@ -9,6 +9,7 @@
 #include "ui/CustomComponents/AdvancedParameterControl/AdvancedParameterControl.h"
 #include "ui/CustomComponents/Header/HeaderComponent.h"
 #include "ui/CustomComponents/Texture/TextureComponent.h"
+#include "ui/CustomComponents/SpatialPanel/SpatialPanel.h"
 #include "ui/LookAndFeel/CustomFontLookAndFeel.h"
 
 //==============================================================================
@@ -25,6 +26,7 @@ public:
 
 private:
     void openFileChooser(int id);
+    void updateParameterView();
 
 private:
     // This reference is provided as a quick way for your editor to
@@ -37,6 +39,8 @@ private:
     OpenGLBackground openGLBackground;
     ParameterControl parameterControl;
     AdvancedParameterControl advancedParameterControl;
+    SpatialPanel spatialPanel;
+    bool detailViewState = false;
     std::unique_ptr<HeaderComponent> headerComponent;
     TextureComponent textureComponent;
 

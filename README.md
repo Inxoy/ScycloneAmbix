@@ -51,6 +51,11 @@ Each network's output is encoded as its own point source. Its position is steere
 
 All parameters are automatable. Their names start with `Ambi`.
 
+The **Spatial** button in the header opens the spatial view:
+- **Sphere view.** A top view (front is up, distance from the centre shows elevation) with both sources moving live and leaving trails. Rings mark the base positions; drag a source to set its base azimuth and elevation. Sources below the horizon are drawn hollow, and the halo grows with spread.
+- **Latent mapping.** Dropdowns for the selected source, and live bars of its normalised latent, with the mapped dimensions marked A/E/S.
+- **Sliders.** Base and depth values of the selected source, plus Smoothing and Dry Width.
+
 The bundled models expose the latent as a second output. The plugin reads one latent frame per model hop (2048 samples for the bundled models) and keeps it aligned with the delayed network audio. To use your own RAVE export, convert it with [`tools/add_latent_output.py`](tools/add_latent_output.py) (instructions are in the script). Models without a latent output still work: the sources then stay at their base positions.
 
 Offline checks of the encoding (SN3D norms, latent modulation, stereo fallback) run with:
@@ -60,6 +65,8 @@ cmake . -B cmake-build -DSCYCLONE_BUILD_TESTS=ON
 cmake --build cmake-build --config Release --target ScycloneAmbixTest
 cmake-build/ScycloneAmbixTest_artefacts/Release/ScycloneAmbixTest
 ```
+
+`ScycloneAmbixTest --snapshot spatial.png` renders the editor with the spatial view open, after 8 seconds of test audio.
 
 ## Installation
 

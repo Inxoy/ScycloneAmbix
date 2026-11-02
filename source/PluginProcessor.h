@@ -69,6 +69,9 @@ public:
     int getAmbisonicOrder() const { return ambisonicOrder; }
     float getAmbisonicAzimuth(int network) const { return processorAmbisonics.getCurrentAzimuth(network); }
     float getAmbisonicElevation(int network) const { return processorAmbisonics.getCurrentElevation(network); }
+    float getAmbisonicSpread(int network) const { return processorAmbisonics.getCurrentSpread(network); }
+    float getNormalisedLatent(int network, int dimension) const { return processorAmbisonics.getNormalisedLatent(network, dimension); }
+    int getNumLatentDimensions(int network) const { return processorAmbisonics.getNumLatentDimensions(network); }
 
     std::function<void(int modelID, juce::String& modelName)> setExternalModelName;
     void setInitialMuteParameters();

@@ -142,6 +142,7 @@ public:
             ;
 
     static juce::StringArray getPluginParameterList();
+    static juce::StringArray getLatentDimensionChoices();
     static juce::AudioProcessorValueTreeState::ParameterLayout createParameterLayout();
     static juce::ValueTree createNotAutomatableParameterLayout();
     static void removeNotAutomatableParameterLayout(juce::ValueTree notAutomatableParameters);
@@ -252,8 +253,6 @@ private:
             .withStringFromValueFunction ([] (float x, auto) { return juce::String (std::roundf(x)) + " ms"; })
             .withValueFromStringFunction ([] (const juce::String& x) { return x.getFloatValue(); })
             .withLabel ("");
-
-    static juce::StringArray getLatentDimensionChoices();
 
 
 //    inline static juce::ValueTreePropertyWithDefault network1NameProperty = juce::ValueTreePropertyWithDefault(notAutomatableParameters, NETWORK1_NAME_NAME,

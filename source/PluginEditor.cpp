@@ -4,7 +4,7 @@
 
 //==============================================================================
 AudioPluginAudioProcessorEditor::AudioPluginAudioProcessorEditor (AudioPluginAudioProcessor& p, juce::AudioProcessorValueTreeState& parameters)
-    : AudioProcessorEditor (&p), apvts(parameters), processorRef (p), transientViewer(p), openGLBackground(parameters, p), advancedParameterControl(parameters), parameterControl(parameters)
+    : AudioProcessorEditor (&p), apvts(parameters), processorRef (p), transientViewer(p), openGLBackground(parameters, p), advancedParameterControl(parameters), spatialPanel(p, parameters), parameterControl(parameters)
 {
     juce::ignoreUnused (processorRef);
 
@@ -18,37 +18,30 @@ AudioPluginAudioProcessorEditor::AudioPluginAudioProcessorEditor (AudioPluginAud
 
     headerComponent->onParameterControlViewChange = [this](bool newState)
     {
-        if (newState)
-        {
-            advancedParameterControl.setVisible(true);
-            parameterControl.setVisible(false);
-            transientViewer.setVisible(false);
+        // also called on hover, only an actual toggle of the detail button leaves the spatial view
+        if (newState != detailViewState) {
+            detailViewState = newState;
+            headerComponent->spatialButton.setToggleState(false, juce::dontSendNotification);
         }
-        else
-        {
-            advancedParameterControl.setVisible(false);
-            parameterControl.setVisible(true);
-            transientViewer.setVisible(true);
-        }
+        updateParameterView();
+    };
+    headerComponent->onSpatialViewChange = [this](bool)
+    {
+        updateParameterView();
     };
 
     addAndMakeVisible(headerComponent.get());
     addAndMakeVisible(openGLBackground);
     addAndMakeVisible(advancedParameterControl);
 //    advancedParameterControl.setVisible(false);
+    addChildComponent(spatialPanel);
     addAndMakeVisible(parameterControl);
     addAndMakeVisible(transientViewer);
     addAndMakeVisible(textureComponent);
     bool state = processorRef.advancedParameterControlVisible.getValue();
 
     headerComponent->detailButton.setToggleState(state, juce::sendNotification);
-    if (!state)
-        advancedParameterControl.setVisible(false);
-    else
-    {
-        parameterControl.setVisible(false);
-        transientViewer.setVisible(false);
-    }
+    updateParameterView();
 
     // Make sure that before the constructor has finished, you've set the
     // editor's size to whatever you need it to be.
@@ -96,6 +89,7 @@ void AudioPluginAudioProcessorEditor::resized()
     openGLBackground.setBounds(padSection);
     transientViewer.setBounds(710, 450, 163, 163);
     advancedParameterControl.setBounds(765, 60, 600, 600);
+    spatialPanel.setBounds(765, 60, 600, 600);
 
 
     auto areaParameter = getLocalBounds().removeFromRight(static_cast<int>((float)getWidth()*0.4f));
@@ -106,6 +100,16 @@ void AudioPluginAudioProcessorEditor::resized()
 
     processorRef.onNetwork1NameChange(processorRef.network1Name.toString());
     processorRef.onNetwork2NameChange(processorRef.network2Name.toString());
+}
+
+void AudioPluginAudioProcessorEditor::updateParameterView() {
+    const bool spatial = headerComponent->spatialButton.getToggleState();
+    const bool advanced = !spatial && headerComponent->detailButton.getToggleState();
+
+    spatialPanel.setVisible(spatial);
+    advancedParameterControl.setVisible(advanced);
+    parameterControl.setVisible(!spatial && !advanced);
+    transientViewer.setVisible(!spatial && !advanced);
 }
 
 void AudioPluginAudioProcessorEditor::parameterChanged(const juce::String &parameterID, float newValue) {

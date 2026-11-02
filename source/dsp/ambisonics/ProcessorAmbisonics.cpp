@@ -123,6 +123,10 @@ void ProcessorAmbisonics::encodeNetwork(int network, const juce::AudioBuffer<flo
 
     source.currentAzimuth = juce::radiansToDegrees(std::atan2(direction.y, direction.x));
     source.currentElevation = juce::radiansToDegrees(std::asin(juce::jlimit(-1.f, 1.f, direction.z)));
+    source.currentSpread = source.spread;
+    source.numLatentDimensions = numLatentDimensions;
+    for (int dim = 0; dim < numDisplayedLatentDimensions; ++dim)
+        source.displayLatent[(size_t) dim] = source.normaliser.getNormalised(dim);
 
     AmbisonicEncoder::Coefficients coefficients;
     AmbisonicEncoder::computeCoefficients(direction.x, direction.y, direction.z, source.spread, coefficients);
@@ -150,10 +154,27 @@ void ProcessorAmbisonics::encodeDry(const juce::AudioBuffer<float> &input, int n
     }
 }
 
+const ProcessorAmbisonics::LatentSource& ProcessorAmbisonics::getSource(int network) const {
+    return sources[(size_t) juce::jlimit(0, 1, network - 1)];
+}
+
 float ProcessorAmbisonics::getCurrentAzimuth(int network) const {
-    return sources[(size_t) juce::jlimit(0, 1, network - 1)].currentAzimuth;
+    return getSource(network).currentAzimuth;
 }
 
 float ProcessorAmbisonics::getCurrentElevation(int network) const {
-    return sources[(size_t) juce::jlimit(0, 1, network - 1)].currentElevation;
+    return getSource(network).currentElevation;
+}
+
+float ProcessorAmbisonics::getCurrentSpread(int network) const {
+    return getSource(network).currentSpread;
+}
+
+float ProcessorAmbisonics::getNormalisedLatent(int network, int dimension) const {
+    if (dimension < 0 || dimension >= numDisplayedLatentDimensions) return 0.f;
+    return getSource(network).displayLatent[(size_t) dimension];
+}
+
+int ProcessorAmbisonics::getNumLatentDimensions(int network) const {
+    return getSource(network).numLatentDimensions;
 }

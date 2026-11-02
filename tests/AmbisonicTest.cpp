@@ -75,7 +75,7 @@ namespace {
         if (setAmbiParameters) {
             // only the network output so the spatial movement is not masked by the dry signal
             for (auto* parameter : processor->getParameters()) {
-                if (auto* p = dynamic_cast<juce::AudioProcessorParameterWithID*>(parameter)) {
+                if (auto* p = dynamic_cast<juce::RangedAudioParameter*>(parameter)) {
                     if (p->paramID == PluginParameters::DRY_WET_ID.getParamID()) p->setValueNotifyingHost(1.f);
                     if (p->paramID == PluginParameters::AMBI_AZIMUTH_DEPTH_NETWORK1_ID.getParamID()) p->setValueNotifyingHost(1.f);
                     if (p->paramID == PluginParameters::AMBI_ELEVATION_DEPTH_NETWORK1_ID.getParamID()) p->setValueNotifyingHost(0.5f);
@@ -154,8 +154,107 @@ namespace {
     }
 }
 
-int main() {
+namespace {
+    juce::Button* findButton(juce::Component& parent, const juce::String& text) {
+        for (auto* child : parent.getChildren()) {
+            if (auto* button = dynamic_cast<juce::Button*>(child); button != nullptr && button->getButtonText() == text)
+                return button;
+            if (auto* found = findButton(*child, text))
+                return found;
+        }
+        return nullptr;
+    }
+
+    // feeds the test signal in real time while the message loop draws the editor
+    class AudioFeeder : public juce::Thread {
+    public:
+        AudioFeeder(juce::AudioProcessor& p, double secondsToRun, std::function<void()> onDone)
+                : juce::Thread("AudioFeeder"), processor(p), seconds(secondsToRun), done(std::move(onDone)) {}
+
+        void run() override {
+            const double sampleRate = 48000.0;
+            const int blockSize = 512;
+            const int numChannels = juce::jmax(processor.getTotalNumInputChannels(), processor.getTotalNumOutputChannels());
+            juce::AudioBuffer<float> buffer(numChannels, blockSize);
+            juce::MidiBuffer midi;
+            juce::Random random(7);
+            const auto start = juce::Time::getMillisecondCounterHiRes();
+            const auto totalBlocks = (int64_t) (seconds * sampleRate / blockSize);
+
+            for (int64_t block = 0; block < totalBlocks && !threadShouldExit(); ++block) {
+                buffer.clear();
+                fillTestSignal(buffer, block * blockSize, sampleRate, random);
+                for (int ch = processor.getTotalNumInputChannels(); ch < numChannels; ++ch) buffer.clear(ch, 0, blockSize);
+                processor.processBlock(buffer, midi);
+
+                const auto due = start + (double) (block + 1) * 1000.0 * blockSize / sampleRate;
+                while (juce::Time::getMillisecondCounterHiRes() < due) juce::Thread::sleep(1);
+            }
+            done();
+        }
+
+    private:
+        juce::AudioProcessor& processor;
+        double seconds;
+        std::function<void()> done;
+    };
+
+    // renders the editor with the spatial view open to a PNG, for checking the layout
+    int renderSnapshot(const juce::File& file) {
+        std::unique_ptr<juce::AudioProcessor> processor(createPluginFilter());
+        juce::AudioProcessor::BusesLayout layout;
+        layout.inputBuses.add(juce::AudioChannelSet::stereo());
+        layout.outputBuses.add(juce::AudioChannelSet::ambisonic(3));
+        processor->setBusesLayout(layout);
+        for (auto* parameter : processor->getParameters()) {
+            if (auto* p = dynamic_cast<juce::RangedAudioParameter*>(parameter)) {
+                if (p->paramID == PluginParameters::ON_OFF_NETWORK2_ID.getParamID()) p->setValueNotifyingHost(1.f);
+                if (p->paramID == PluginParameters::FADE_ID.getParamID()) p->setValueNotifyingHost(0.5f);
+                if (p->paramID == PluginParameters::AMBI_AZIMUTH_NETWORK2_ID.getParamID()) p->setValueNotifyingHost(p->convertTo0to1(-100.f));
+                if (p->paramID == PluginParameters::AMBI_SPREAD_DEPTH_NETWORK2_ID.getParamID()) p->setValueNotifyingHost(0.4f);
+            }
+        }
+        processor->prepareToPlay(48000.0, 512);
+
+        std::unique_ptr<juce::AudioProcessorEditor> editor(processor->createEditor());
+        editor->setVisible(true);
+        auto* spatialButton = findButton(*editor, "Spatial");
+        if (spatialButton == nullptr) {
+            std::cout << "spatial button not found" << std::endl;
+            return 1;
+        }
+        spatialButton->setToggleState(true, juce::dontSendNotification);
+        spatialButton->onClick();
+
+        bool written = false;
+        AudioFeeder feeder(*processor, 8.0, [&] {
+            juce::MessageManager::callAsync([&] {
+                auto image = editor->createComponentSnapshot(editor->getLocalBounds());
+                juce::FileOutputStream stream(file);
+                if (stream.openedOk()) {
+                    stream.setPosition(0);
+                    stream.truncate();
+                    written = juce::PNGImageFormat().writeImageToStream(image, stream);
+                }
+                juce::MessageManager::getInstance()->stopDispatchLoop();
+            });
+        });
+        feeder.startThread();
+        juce::MessageManager::getInstance()->runDispatchLoop();
+        feeder.stopThread(2000);
+
+        editor.reset();
+        processor->releaseResources();
+        std::cout << (written ? "wrote " + file.getFullPathName() : juce::String("could not write snapshot")) << std::endl;
+        return written ? 0 : 1;
+    }
+}
+
+int main(int argc, char* argv[]) {
     juce::ScopedJuceInitialiser_GUI juceInitialiser;
+
+    if (argc == 3 && juce::String(argv[1]) == "--snapshot")
+        return renderSnapshot(juce::File::getCurrentWorkingDirectory().getChildFile(argv[2]));
 
     testEncoderNormalisation();
 

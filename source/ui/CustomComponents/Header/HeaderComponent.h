@@ -22,7 +22,9 @@ public:
 
     void paint(juce::Graphics& g) override;
     juce::DrawableButton detailButton;
+    juce::TextButton spatialButton {"Spatial"};
     std::function<void(bool newState)> onParameterControlViewChange;
+    std::function<void(bool newState)> onSpatialViewChange;
 
 private:
     AudioPluginAudioProcessor& audioProcessor;

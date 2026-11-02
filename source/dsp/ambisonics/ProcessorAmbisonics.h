@@ -37,6 +37,12 @@ public:
 
     float getCurrentAzimuth(int network) const;
     float getCurrentElevation(int network) const;
+    float getCurrentSpread(int network) const;
+    // normalised latent values of the last block, for display
+    float getNormalisedLatent(int network, int dimension) const;
+    int getNumLatentDimensions(int network) const;
+
+    static constexpr int numDisplayedLatentDimensions = 16;
 
 private:
     struct SourceParameters {
@@ -60,7 +66,12 @@ private:
         bool initialised = false;
         std::atomic<float> currentAzimuth {0.f};
         std::atomic<float> currentElevation {0.f};
+        std::atomic<float> currentSpread {0.f};
+        std::atomic<int> numLatentDimensions {0};
+        std::array<std::atomic<float>, numDisplayedLatentDimensions> displayLatent {};
     };
+
+    const LatentSource& getSource(int network) const;
 
     float getSmoothingCoefficient(int numSamples) const;
 

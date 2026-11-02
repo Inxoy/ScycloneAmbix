@@ -256,6 +256,16 @@ int main(int argc, char* argv[]) {
     if (argc == 3 && juce::String(argv[1]) == "--snapshot")
         return renderSnapshot(juce::File::getCurrentWorkingDirectory().getChildFile(argv[2]));
 
+    if (argc == 2 && juce::String(argv[1]) == "--device-types") {
+        // the audio device types the standalone offers, e.g. to check that ASIO is compiled in
+        juce::AudioDeviceManager deviceManager;
+        for (auto* type : deviceManager.getAvailableDeviceTypes()) {
+            type->scanForDevices();
+            std::cout << type->getTypeName() << ": " << type->getDeviceNames().joinIntoString(", ") << std::endl;
+        }
+        return 0;
+    }
+
     testEncoderNormalisation();
 
     std::cout << "third order AmbiX output, latent modulation" << std::endl;

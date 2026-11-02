@@ -66,7 +66,7 @@ cmake --build cmake-build --config Release --target ScycloneAmbixTest
 cmake-build/ScycloneAmbixTest_artefacts/Release/ScycloneAmbixTest
 ```
 
-`ScycloneAmbixTest --snapshot spatial.png` renders the editor with the spatial view open, after 8 seconds of test audio.
+`ScycloneAmbixTest --snapshot spatial.png` renders the editor with the spatial view open, after 8 seconds of test audio. `ScycloneAmbixTest --device-types` lists the audio device types and devices the standalone can use, for example to check that ASIO is compiled in.
 
 ## Installation
 

@@ -15,6 +15,12 @@ public:
     using Coefficients = std::array<float, maxChannels>;
 
     static int getNumChannelsForOrder(int order) { return (order + 1) * (order + 1); }
+    // 4, 9 and 16 channels are first to third order, anything else is no ambisonic signal (-1)
+    static int getOrderForNumChannels(int numChannels) {
+        for (int order = 1; order <= maxOrder; ++order)
+            if (getNumChannelsForOrder(order) == numChannels) return order;
+        return -1;
+    }
 
     // direction is a unit vector (x front, y left, z up), spread 0 = point source, 1 = omni
     static void computeCoefficients(float x, float y, float z, float spread, Coefficients& coefficients);

@@ -66,7 +66,9 @@ namespace {
         bool finite = true;
     };
 
-    RunResult run(const juce::AudioChannelSet& outputLayout, double seconds, bool setAmbiParameters) {
+    // layoutAfterPrepare imitates hosts that change the bus layout without preparing again
+    RunResult run(const juce::AudioChannelSet& outputLayout, double seconds, bool setAmbiParameters,
+                  const juce::AudioChannelSet& layoutAfterPrepare = {}) {
         std::unique_ptr<juce::AudioProcessor> processor(createPluginFilter());
         juce::AudioProcessor::BusesLayout layout;
         layout.inputBuses.add(juce::AudioChannelSet::stereo());
@@ -88,6 +90,11 @@ namespace {
         const double sampleRate = 48000.0;
         const int blockSize = 512;
         processor->prepareToPlay(sampleRate, blockSize);
+
+        if (layoutAfterPrepare.size() > 0) {
+            layout.outputBuses.getReference(0) = layoutAfterPrepare;
+            check(processor->setBusesLayout(layout), "switched to " + layoutAfterPrepare.getDescription() + " after prepare");
+        }
 
         const int numChannels = juce::jmax(processor->getTotalNumInputChannels(), processor->getTotalNumOutputChannels());
         juce::AudioBuffer<float> buffer(numChannels, blockSize);
@@ -303,6 +310,19 @@ int main(int argc, char* argv[]) {
     auto stereo = run(juce::AudioChannelSet::stereo(), 4.0, false);
     check(stereo.channelEnergy.size() == 2 && stereo.finite && stereo.channelEnergy[0] > 1.0, "stereo output with signal");
     check(std::abs(stereo.channelEnergy[0] - stereo.channelEnergy[1]) < 1.0e-3 * stereo.channelEnergy[0], "left and right match as before");
+
+    std::cout << "generic 16 channel output (Reaper, standalone)" << std::endl;
+    auto discrete = run(juce::AudioChannelSet::discreteChannels(16), 4.0, false);
+    check(discrete.channelEnergy.size() == 16 && discrete.finite, "encoded as third order");
+    double discreteHigherOrders = 0.0;
+    for (size_t ch = 4; ch < discrete.channelEnergy.size(); ++ch) discreteHigherOrders += discrete.channelEnergy[ch];
+    check(discreteHigherOrders > 0.0, "higher orders carry signal");
+
+    std::cout << "AmbiX prepared, then switched to stereo without preparing again (Reaper)" << std::endl;
+    auto switched = run(juce::AudioChannelSet::ambisonic(3), 4.0, false, juce::AudioChannelSet::stereo());
+    check(switched.channelEnergy.size() == 2 && switched.finite && switched.channelEnergy[0] > 1.0, "stereo output with signal");
+    check(std::abs(switched.channelEnergy[0] - switched.channelEnergy[1]) < 1.0e-3 * switched.channelEnergy[0],
+          "left and right match (no W/Y on left/right)");
 
     std::cout << (failures == 0 ? "all checks passed" : juce::String(failures) + " check(s) failed") << std::endl;
     return failures == 0 ? 0 : 1;

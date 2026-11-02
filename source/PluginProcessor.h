@@ -130,7 +130,7 @@ private:
     ProcessorAmbisonics processorAmbisonics;
     juce::AudioBuffer<float> ambiBuffer;
     juce::AudioBuffer<float> ambiDryBuffer;
-    int ambisonicOrder = -1;
+    std::atomic<int> ambisonicOrder {-1};
 
     //==============================================================================
     JUCE_HEAVYWEIGHT_LEAK_DETECTOR (AudioPluginAudioProcessor)

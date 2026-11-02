@@ -121,24 +121,25 @@ void AudioPluginAudioProcessor::changeProgramName (int index, const juce::String
 
 //==============================================================================
 void AudioPluginAudioProcessor::prepareToPlay (double sampleRate, int samplesPerBlock) {
-    ambisonicOrder = getBus(false, 0) != nullptr ? getBus(false, 0)->getCurrentLayout().getAmbisonicOrder() : -1;
-    const int numAmbiChannels = ambisonicOrder > 0 ? AmbisonicEncoder::getNumChannelsForOrder(ambisonicOrder) : 0;
+    // Hosts may change the output layout without preparing again (Reaper does), so everything is
+    // prepared for third order and processBlock picks the order from the current channel count.
+    ambisonicOrder = AmbisonicEncoder::getOrderForNumChannels(getTotalNumOutputChannels());
+    const int maxAmbiChannels = AmbisonicEncoder::maxChannels;
 
     juce::dsp::ProcessSpec spec {sampleRate,
                                  static_cast<juce::uint32>(samplesPerBlock),
-                                 static_cast<juce::uint32>(juce::jmax(getTotalNumInputChannels(), getTotalNumOutputChannels()))};
+                                 static_cast<juce::uint32>(juce::jmax(getTotalNumInputChannels(), getTotalNumOutputChannels(), maxAmbiChannels))};
     juce::dsp::ProcessSpec monoSpec {sampleRate,
                                  static_cast<juce::uint32>(samplesPerBlock),
                                  static_cast<juce::uint32>(1)};
     // the compressor mixer runs on the encoded signal when the output is ambisonic
     juce::dsp::ProcessSpec compSpec {sampleRate,
                                  static_cast<juce::uint32>(samplesPerBlock),
-                                 static_cast<juce::uint32>(juce::jmax(1, numAmbiChannels))};
+                                 static_cast<juce::uint32>(maxAmbiChannels)};
 
-    ambiBuffer.setSize(juce::jmax(1, numAmbiChannels), samplesPerBlock);
-    ambiDryBuffer.setSize(juce::jmax(1, numAmbiChannels), samplesPerBlock);
-    processorAmbisonics.prepare(sampleRate, juce::jmax(1, ambisonicOrder));
-    processorCompressor.setFirstChannelDetection(ambisonicOrder > 0);
+    ambiBuffer.setSize(maxAmbiChannels, samplesPerBlock);
+    ambiDryBuffer.setSize(maxAmbiChannels, samplesPerBlock);
+    processorAmbisonics.prepare(sampleRate, AmbisonicEncoder::maxOrder);
 
     network1Buffer.setSize((int) monoSpec.numChannels, (int) monoSpec.maximumBlockSize);
     network2Buffer.setSize((int) monoSpec.numChannels, (int) monoSpec.maximumBlockSize);
@@ -194,8 +195,10 @@ bool AudioPluginAudioProcessor::isBusesLayoutSupported (const BusesLayout& layou
     if (input != juce::AudioChannelSet::mono() && input != juce::AudioChannelSet::stereo())
         return false;
 
+    // AmbiX layouts, and any other layout with 4, 9 or 16 channels: hosts like Reaper and the
+    // standalone offer plain multichannel layouts, these are treated as AmbiX of matching order
     const int order = output.getAmbisonicOrder();
-    if (order >= 1 && order <= AmbisonicEncoder::maxOrder)
+    if ((order >= 1 && order <= AmbisonicEncoder::maxOrder) || AmbisonicEncoder::getOrderForNumChannels(output.size()) > 0)
         return true;
 
     // Some plugin hosts, such as certain GarageBand versions, will only
@@ -217,12 +220,18 @@ bool AudioPluginAudioProcessor::isBusesLayoutSupported (const BusesLayout& layou
 
 void AudioPluginAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer,
                                               juce::MidiBuffer& ) {
-    const bool ambisonicOutput = ambisonicOrder > 0;
+    const int order = AmbisonicEncoder::getOrderForNumChannels(getTotalNumOutputChannels());
+    const int numAmbiChannels = order > 0 ? AmbisonicEncoder::getNumChannelsForOrder(order) : 0;
+    const bool ambisonicOutput = order > 0 && buffer.getNumChannels() >= numAmbiChannels;
+    ambisonicOrder = ambisonicOutput ? order : -1;
+    processorCompressor.setFirstChannelDetection(ambisonicOutput);
+
     const int numInputChannels = ambisonicOutput ? getTotalNumInputChannels() : buffer.getNumChannels();
 
     if (ambisonicOutput) {
         // the dry signal is encoded as well, so the global mix blends two ambisonic signals
-        ambiDryBuffer.setSize(ambiDryBuffer.getNumChannels(), buffer.getNumSamples(), false, false, true);
+        ambiBuffer.setSize(numAmbiChannels, buffer.getNumSamples(), false, false, true);
+        ambiDryBuffer.setSize(numAmbiChannels, buffer.getNumSamples(), false, false, true);
         ambiDryBuffer.clear();
         processorAmbisonics.encodeDry(buffer, numInputChannels, ambiDryBuffer);
         dryWetMixer.setDrySamples(ambiDryBuffer);
@@ -290,7 +299,6 @@ void AudioPluginAudioProcessor::processNetworks() {
 
 void AudioPluginAudioProcessor::processAmbisonicOutput(juce::AudioBuffer<float>& buffer) {
     const int numSamples = buffer.getNumSamples();
-    ambiBuffer.setSize(ambiBuffer.getNumChannels(), numSamples, false, false, true);
 
     // each network becomes its own source, the fade sets their gains (linear, like the fade mixer)
     const float fade = parameters.getRawParameterValue(PluginParameters::FADE_ID.getParamID())->load();

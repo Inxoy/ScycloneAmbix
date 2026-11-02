@@ -19,6 +19,10 @@ void ProcessorCompressor::prepare(const juce::dsp::ProcessSpec &spec){
     compressor.prepare(spec);
 }
 
+void ProcessorCompressor::setFirstChannelDetection(bool shouldUseFirstChannelOnly) {
+    compressor.setFirstChannelDetection(shouldUseFirstChannelOnly);
+}
+
 void ProcessorCompressor::processBlock(juce::AudioBuffer<float>& buffer){
     compressor.processBlock(buffer);
 }

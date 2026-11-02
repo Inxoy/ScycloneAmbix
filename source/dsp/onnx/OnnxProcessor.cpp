@@ -13,9 +13,25 @@ OnnxProcessor::OnnxProcessor(juce::AudioProcessorValueTreeState &apvts, int no, 
         return 0;
     };
 
+    inferenceThread.onNewLatentFrames = [this] (const float* latent, int numDimensions, int numFrames) {
+        if (numFrames <= 0) return;
+        auto dims = juce::jmin(numDimensions, maxLatentDimensions);
+        for (int frame = 0; frame < numFrames; ++frame) {
+            for (int dim = 0; dim < dims; ++dim) {
+                latentRingBuffer.pushSample(latent[dim * numFrames + frame], dim);
+            }
+        }
+        latentHopSize = inferenceThread.getModelInputSize() / numFrames;
+        numLatentDimensions = dims;
+    };
+
     inferenceThread.onModelLoaded = [this] (juce::String modelName) {
         onOnnxModelLoad(false, modelName);
         receiveRingBuffer.reset();
+        latentRingBuffer.reset();
+        numLatentDimensions = 0;
+        samplesUntilNextLatentFrame = 0;
+        std::fill(currentLatent.begin(), currentLatent.end(), 0.f);
         inferenceCounter = 0;
     };
 }
@@ -42,6 +58,11 @@ void OnnxProcessor::parameterChanged(const juce::String &parameterID, float newV
 
 void OnnxProcessor::prepare(const juce::dsp::ProcessSpec &spec) {
     receiveRingBuffer.initialise(1, (int) spec.sampleRate);
+    // one latent frame per model hop, a second of audio needs far less than this
+    latentRingBuffer.initialise(maxLatentDimensions, 512);
+    currentLatent.assign(maxLatentDimensions, 0.f);
+    numLatentDimensions = 0;
+    samplesUntilNextLatentFrame = 0;
     monoBuffer.setSize(1, (int) spec.maximumBlockSize);
     inferenceThread.prepare(spec);
     inferenceCounter = 0;
@@ -64,12 +85,14 @@ void OnnxProcessor::processOutput(juce::AudioBuffer<float> &buffer, const int nu
         if (availableSamples >= numSamples) {
             if (inferenceCounter > 0) {
                 if (availableSamples >= 2 * numSamples) {
+                    advanceLatent(numSamples);
                     for (int i = 0; i < numSamples; ++i) {
                         receiveRingBuffer.popSample(0);
                     }
                     inferenceCounter--;
                 }
             }
+            advanceLatent(numSamples);
             for (int sample = 0; sample < numSamples; ++sample) {
                 buffer.setSample(0, sample, receiveRingBuffer.popSample(0));
             }
@@ -81,6 +104,34 @@ void OnnxProcessor::processOutput(juce::AudioBuffer<float> &buffer, const int nu
             }
         }
     }
+}
+
+void OnnxProcessor::advanceLatent(int numSamples) {
+    // latent frames are pushed before their audio, so every frame that starts within the
+    // popped samples is already available. The last frame that starts in this block wins.
+    const int hop = latentHopSize;
+    if (hop <= 0) return;
+    const int dims = numLatentDimensions;
+
+    while (samplesUntilNextLatentFrame < numSamples) {
+        if (latentRingBuffer.getAvailableSamples(0) <= 0) {
+            samplesUntilNextLatentFrame = 0;
+            return;
+        }
+        for (int dim = 0; dim < dims; ++dim) {
+            currentLatent[(size_t) dim] = latentRingBuffer.popSample(dim);
+        }
+        samplesUntilNextLatentFrame += hop;
+    }
+    samplesUntilNextLatentFrame -= numSamples;
+}
+
+const std::vector<float>& OnnxProcessor::getCurrentLatent() const {
+    return currentLatent;
+}
+
+int OnnxProcessor::getNumLatentDimensions() const {
+    return numLatentDimensions;
 }
 
 void OnnxProcessor::loadExternalModel(juce::File file) {

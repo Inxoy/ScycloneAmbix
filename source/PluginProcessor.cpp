@@ -8,7 +8,7 @@ AudioPluginAudioProcessor::AudioPluginAudioProcessor()
                       #if ! JucePlugin_IsSynth
                        .withInput  ("Input",  juce::AudioChannelSet::stereo(), true)
                       #endif
-                       .withOutput ("Output", juce::AudioChannelSet::stereo(), true)
+                       .withOutput ("Output", juce::AudioChannelSet::ambisonic(3), true)
                      #endif
                        ),
         parameters (*this, nullptr, juce::Identifier ("Scyclone"), PluginParameters::createParameterLayout()),
@@ -20,7 +20,8 @@ AudioPluginAudioProcessor::AudioPluginAudioProcessor()
         onnxProcessor2(parameters, 2, Djembe),
         grainDelay1(1),
         grainDelay2(2),
-        processorCompressor(parameters)
+        processorCompressor(parameters),
+        processorAmbisonics(parameters)
 {
 
     network1Name = "Funk";
@@ -120,12 +121,24 @@ void AudioPluginAudioProcessor::changeProgramName (int index, const juce::String
 
 //==============================================================================
 void AudioPluginAudioProcessor::prepareToPlay (double sampleRate, int samplesPerBlock) {
+    ambisonicOrder = getBus(false, 0) != nullptr ? getBus(false, 0)->getCurrentLayout().getAmbisonicOrder() : -1;
+    const int numAmbiChannels = ambisonicOrder > 0 ? AmbisonicEncoder::getNumChannelsForOrder(ambisonicOrder) : 0;
+
     juce::dsp::ProcessSpec spec {sampleRate,
                                  static_cast<juce::uint32>(samplesPerBlock),
-                                 static_cast<juce::uint32>(getTotalNumInputChannels())};
+                                 static_cast<juce::uint32>(juce::jmax(getTotalNumInputChannels(), getTotalNumOutputChannels()))};
     juce::dsp::ProcessSpec monoSpec {sampleRate,
                                  static_cast<juce::uint32>(samplesPerBlock),
                                  static_cast<juce::uint32>(1)};
+    // the compressor mixer runs on the encoded signal when the output is ambisonic
+    juce::dsp::ProcessSpec compSpec {sampleRate,
+                                 static_cast<juce::uint32>(samplesPerBlock),
+                                 static_cast<juce::uint32>(juce::jmax(1, numAmbiChannels))};
+
+    ambiBuffer.setSize(juce::jmax(1, numAmbiChannels), samplesPerBlock);
+    ambiDryBuffer.setSize(juce::jmax(1, numAmbiChannels), samplesPerBlock);
+    processorAmbisonics.prepare(sampleRate, juce::jmax(1, ambisonicOrder));
+    processorCompressor.setFirstChannelDetection(ambisonicOrder > 0);
 
     network1Buffer.setSize((int) monoSpec.numChannels, (int) monoSpec.maximumBlockSize);
     network2Buffer.setSize((int) monoSpec.numChannels, (int) monoSpec.maximumBlockSize);
@@ -137,7 +150,7 @@ void AudioPluginAudioProcessor::prepareToPlay (double sampleRate, int samplesPer
     dryWetMixer.prepare(spec);
     
     fadeMixer.prepare(monoSpec);
-    compMixer.prepare(monoSpec);
+    compMixer.prepare(compSpec);
     grain1DryWetMixer.prepare(monoSpec);
     grain2DryWetMixer.prepare(monoSpec);
     onnxProcessor1.prepare(monoSpec);
@@ -173,12 +186,22 @@ bool AudioPluginAudioProcessor::isBusesLayoutSupported (const BusesLayout& layou
     juce::ignoreUnused (layouts);
     return true;
   #else
-    // This is the place where you check if the layout is supported.
-    // In this template code we only support mono or stereo.
+    // Mono or stereo input. The output is either AmbiX (first to third order) or
+    // matches the input, as in the original stereo plugin.
+    const auto& input = layouts.getMainInputChannelSet();
+    const auto& output = layouts.getMainOutputChannelSet();
+
+    if (input != juce::AudioChannelSet::mono() && input != juce::AudioChannelSet::stereo())
+        return false;
+
+    const int order = output.getAmbisonicOrder();
+    if (order >= 1 && order <= AmbisonicEncoder::maxOrder)
+        return true;
+
     // Some plugin hosts, such as certain GarageBand versions, will only
     // load plugins that support stereo bus layouts.
-    if (layouts.getMainOutputChannelSet() != juce::AudioChannelSet::mono()
-     && layouts.getMainOutputChannelSet() != juce::AudioChannelSet::stereo())
+    if (output != juce::AudioChannelSet::mono()
+     && output != juce::AudioChannelSet::stereo())
 
         return false;
 
@@ -194,9 +217,42 @@ bool AudioPluginAudioProcessor::isBusesLayoutSupported (const BusesLayout& layou
 
 void AudioPluginAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer,
                                               juce::MidiBuffer& ) {
-    dryWetMixer.setDrySamples(buffer);
-    stereoToMono(monoBuffer, buffer);
+    const bool ambisonicOutput = ambisonicOrder > 0;
+    const int numInputChannels = ambisonicOutput ? getTotalNumInputChannels() : buffer.getNumChannels();
+
+    if (ambisonicOutput) {
+        // the dry signal is encoded as well, so the global mix blends two ambisonic signals
+        ambiDryBuffer.setSize(ambiDryBuffer.getNumChannels(), buffer.getNumSamples(), false, false, true);
+        ambiDryBuffer.clear();
+        processorAmbisonics.encodeDry(buffer, numInputChannels, ambiDryBuffer);
+        dryWetMixer.setDrySamples(ambiDryBuffer);
+    } else {
+        dryWetMixer.setDrySamples(buffer);
+    }
+
+    stereoToMono(monoBuffer, buffer, numInputChannels);
     
+    processNetworks();
+
+    if (ambisonicOutput) {
+        processAmbisonicOutput(buffer);
+        return;
+    }
+
+    monoBuffer.makeCopyOf(network1Buffer);
+    fadeMixer.setDrySamples(network2Buffer);
+    fadeMixer.setWetSamples(monoBuffer);
+
+    compMixer.setDrySamples(monoBuffer);
+    processorCompressor.processBlock(monoBuffer);
+    compMixer.setWetSamples(monoBuffer);
+
+    processorGain.processOutputBlock(monoBuffer);
+    monoToStereo(buffer, monoBuffer);
+    dryWetMixer.setWetSamples(buffer);
+}
+
+void AudioPluginAudioProcessor::processNetworks() {
     processorGain.processInputBlock(monoBuffer);
 
     network1Buffer.makeCopyOf(monoBuffer);
@@ -230,17 +286,33 @@ void AudioPluginAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer,
         network1Buffer.clear();
     if (parameters.getRawParameterValue(PluginParameters::ON_OFF_NETWORK2_ID.getParamID())->load() == 0.f)
         network2Buffer.clear();
+}
 
-    monoBuffer.makeCopyOf(network1Buffer);
-    fadeMixer.setDrySamples(network2Buffer);
-    fadeMixer.setWetSamples(monoBuffer);
+void AudioPluginAudioProcessor::processAmbisonicOutput(juce::AudioBuffer<float>& buffer) {
+    const int numSamples = buffer.getNumSamples();
+    ambiBuffer.setSize(ambiBuffer.getNumChannels(), numSamples, false, false, true);
 
-    compMixer.setDrySamples(monoBuffer);
-    processorCompressor.processBlock(monoBuffer);
-    compMixer.setWetSamples(monoBuffer);
+    // each network becomes its own source, the fade sets their gains (linear, like the fade mixer)
+    const float fade = parameters.getRawParameterValue(PluginParameters::FADE_ID.getParamID())->load();
+    ambiBuffer.clear();
+    processorAmbisonics.encodeNetwork(1, network1Buffer, onnxProcessor1.getCurrentLatent(),
+                                      onnxProcessor1.getNumLatentDimensions(), fade, ambiBuffer);
+    processorAmbisonics.encodeNetwork(2, network2Buffer, onnxProcessor2.getCurrentLatent(),
+                                      onnxProcessor2.getNumLatentDimensions(), 1.f - fade, ambiBuffer);
 
-    processorGain.processOutputBlock(monoBuffer);
-    monoToStereo(buffer, monoBuffer);
+    // W carries the mono mix, the compressor detects on it and applies the gain to all channels
+    compMixer.setDrySamples(ambiBuffer);
+    processorCompressor.processBlock(ambiBuffer);
+    compMixer.setWetSamples(ambiBuffer);
+
+    processorGain.processOutputBlock(ambiBuffer);
+
+    for (int channel = 0; channel < buffer.getNumChannels(); ++channel) {
+        if (channel < ambiBuffer.getNumChannels())
+            buffer.copyFrom(channel, 0, ambiBuffer, channel, 0, numSamples);
+        else
+            buffer.clear(channel, 0, numSamples);
+    }
     dryWetMixer.setWetSamples(buffer);
 }
 
@@ -342,9 +414,12 @@ void AudioPluginAudioProcessor::initialiseRnbo(){
     grainDelay2.setParameterValue(parameters.getRawParameterValue(PluginParameters::GRAIN_NETWORK2_SIZE_ID.getParamID()), 1);
 }
 
-void AudioPluginAudioProcessor::stereoToMono(juce::AudioBuffer<float> &targetMonoBlock, juce::AudioBuffer<float> &sourceBlock) {
-    if (sourceBlock.getNumChannels() == 1) {
+void AudioPluginAudioProcessor::stereoToMono(juce::AudioBuffer<float> &targetMonoBlock, juce::AudioBuffer<float> &sourceBlock, int numSourceChannels) {
+    if (numSourceChannels == 1 && sourceBlock.getNumChannels() == 1) {
         targetMonoBlock.makeCopyOf(sourceBlock);
+    } else if (numSourceChannels == 1) {
+        targetMonoBlock.setSize(1, sourceBlock.getNumSamples(), false, false, true);
+        targetMonoBlock.copyFrom(0, 0, sourceBlock, 0, 0, sourceBlock.getNumSamples());
     } else {
         auto nSamples = sourceBlock.getNumSamples();
 

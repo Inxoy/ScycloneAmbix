@@ -35,6 +35,32 @@ We have provided two pre-trained models (presets) accessible under **assets/mode
 - **Funk Drums**: Trained on four hours of captivating vintage drum-breaks
 - **Djembe**: Trained on five hours of carefully compiled Djembe dataset (Three hours of Djembe solo performances and two hours of one-shot recordings)
 
+## ScycloneAmbix: latent space as ambisonic parameters
+
+This fork outputs **AmbiX** (ACN channel order, SN3D normalisation) of first to third order. The plugin defaults to 16 channels (third order). Hosts can also choose 4 or 9 channels, or plain mono/stereo, which keeps the original signal flow.
+
+Each network's output is encoded as its own point source. Its position is steered by the network's **RAVE latent space**:
+
+- Every network has a base **Azimuth**, **Elevation** and **Spread**.
+- One latent dimension (selectable, `Latent 1`–`Latent 16`) modulates each of the three, scaled by a **Latent Depth** (100 % = ±180° azimuth, ±90° elevation, ±1 spread).
+- Latent values are normalised to [-1, 1] by a running mean and standard deviation (about 8 s), because their ranges differ a lot between models.
+- **Ambi Smoothing** sets the time constant of the movement. The direction is smoothed as a vector, so there are no jumps at ±180°.
+- **Spread** fades out the higher orders. At 100 % only W remains, so the source is omnidirectional.
+- The **Fade** parameter sets the gains of the two sources. The compressor detects on W, which is the mono mix of both networks, and applies the same gain to all channels.
+- The dry signal is encoded as a source pair at ±**Ambi Dry Width** (stereo input) or straight ahead (mono input), so **Global Mix** blends two ambisonic signals.
+
+All parameters are automatable. Their names start with `Ambi`.
+
+The bundled models expose the latent as a second output. The plugin reads one latent frame per model hop (2048 samples for the bundled models) and keeps it aligned with the delayed network audio. To use your own RAVE export, convert it with [`tools/add_latent_output.py`](tools/add_latent_output.py) (instructions are in the script). Models without a latent output still work: the sources then stay at their base positions.
+
+Offline checks of the encoding (SN3D norms, latent modulation, stereo fallback) run with:
+
+```bash
+cmake . -B cmake-build -DSCYCLONE_BUILD_TESTS=ON
+cmake --build cmake-build --config Release --target ScycloneAmbixTest
+cmake-build/ScycloneAmbixTest_artefacts/Release/ScycloneAmbixTest
+```
+
 ## Installation
 
 Detailed instructions can be found here:

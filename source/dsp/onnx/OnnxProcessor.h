@@ -21,10 +21,17 @@ public:
     int getLatency() const;
     void loadExternalModel(juce::File path);
 
+    // latent frame that belongs to the audio returned by the last processBlock call
+    const std::vector<float>& getCurrentLatent() const;
+    int getNumLatentDimensions() const;
+
     std::function<void(bool initLoading, juce::String modelName)> onOnnxModelLoad;
+
+    static constexpr int maxLatentDimensions = 128;
 
 private:
     void processOutput(juce::AudioBuffer<float>& buffer, int numSamples);
+    void advanceLatent(int numSamples);
     void calculateLatency(int maxSamplesPerBuffer);
 
 
@@ -34,6 +41,11 @@ private:
     InferenceThread inferenceThread;
     int latencyInSamples = 0;
     RingBuffer receiveRingBuffer;
+    RingBuffer latentRingBuffer;
+    std::vector<float> currentLatent;
+    std::atomic<int> numLatentDimensions {0};
+    std::atomic<int> latentHopSize {0};
+    int samplesUntilNextLatentFrame = 0;
     juce::AudioBuffer<float> monoBuffer;
     int inferenceCounter = 0;
     std::unique_ptr<juce::FileChooser> fc;

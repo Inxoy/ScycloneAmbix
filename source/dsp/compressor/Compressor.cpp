@@ -161,6 +161,11 @@ void Compressor::setCompressionTypeIndex(int newCompressionTypeIndex) {
         parameter.compType = CompressorType::Expander;
 }
 
+void Compressor::setFirstChannelDetection(bool shouldUseFirstChannelOnly) {
+    firstChannelDetection = shouldUseFirstChannelOnly;
+    envelope.setFirstChannelDetection(shouldUseFirstChannelOnly);
+}
+
 int Compressor::getCompressionTypeIndex() const {
     if (parameter.compType == CompressorType::Expander)
         return 1;
@@ -170,7 +175,8 @@ int Compressor::getCompressionTypeIndex() const {
 
 void Compressor::copyAutoMakeUpBuffer(juce::AudioBuffer<float>& target, juce::AudioBuffer<float>& source, bool input) {
     auto writePointer = target.getWritePointer(0);
-    for (int channel = 0; channel < source.getNumChannels(); channel++){
+    const int numChannels = firstChannelDetection ? juce::jmin(1, source.getNumChannels()) : source.getNumChannels();
+    for (int channel = 0; channel < numChannels; channel++){
         auto readPointer = source.getReadPointer(channel);
         if (input){
             for (int sample = 0; sample < source.getNumSamples(); sample++){

@@ -25,7 +25,7 @@ void Envelope::prepare(const juce::dsp::ProcessSpec &spec){
 }
 
 void Envelope::processBlock(juce::AudioBuffer<float>& buffer){
-    bool mono = (buffer.getNumChannels() == 1);
+    bool mono = (buffer.getNumChannels() == 1) || firstChannelDetection;
     if (attackTime == 0.f){
         for (unsigned long i = 0; i < (unsigned long) buffer.getNumSamples(); i++){
             detector[i] = (mono) ? buffer.getSample(0, (int) i)
@@ -63,6 +63,10 @@ void Envelope::setReleaseTime(float newReleaseTime){
 
 float Envelope::getReleaseTime() const{
     return releaseTime;
+}
+
+void Envelope::setFirstChannelDetection(bool shouldUseFirstChannelOnly) {
+    firstChannelDetection = shouldUseFirstChannelOnly;
 }
 
 float Envelope::getSample(unsigned long sample){

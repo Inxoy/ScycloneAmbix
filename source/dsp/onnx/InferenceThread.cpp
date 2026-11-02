@@ -69,13 +69,28 @@ void InferenceThread::run() {
     Ort::AllocatedStringPtr inputName = session.GetInputNameAllocated(0, ort_alloc);
     Ort::AllocatedStringPtr outputName = session.GetOutputNameAllocated(0, ort_alloc);
     const std::array<const char *, 1> inputNames = {(char*) inputName.get()};
-    const std::array<const char *, 1> outputNames = {(char*) outputName.get()};
 
     // run inference
-    try {
-        session.Run(runOptions, inputNames.data(), inputTensor.get(), 1, outputNames.data(), outputTensor.get(), 1);
-    } catch (Ort::Exception &e) {
-        std::cout << e.what() << std::endl;
+    if (hasLatentOutput) {
+        Ort::AllocatedStringPtr latentName = session.GetOutputNameAllocated(1, ort_alloc);
+        const std::array<const char *, 2> outputNames = {(char*) outputName.get(), (char*) latentName.get()};
+        // the latent tensor is allocated by onnxruntime, its shape is [1, dimensions, frames]
+        std::array<Ort::Value, 2> outputValues = {std::move(*outputTensor), Ort::Value(nullptr)};
+        try {
+            session.Run(runOptions, inputNames.data(), inputTensor.get(), 1, outputNames.data(), outputValues.data(), 2);
+            auto latentShape = outputValues[1].GetTensorTypeAndShapeInfo().GetShape();
+            if (latentShape.size() == 3 && onNewLatentFrames)
+                onNewLatentFrames(outputValues[1].GetTensorData<float>(), (int) latentShape[1], (int) latentShape[2]);
+        } catch (Ort::Exception &e) {
+            std::cout << e.what() << std::endl;
+        }
+    } else {
+        const std::array<const char *, 1> outputNames = {(char*) outputName.get()};
+        try {
+            session.Run(runOptions, inputNames.data(), inputTensor.get(), 1, outputNames.data(), outputTensor.get(), 1);
+        } catch (Ort::Exception &e) {
+            std::cout << e.what() << std::endl;
+        }
     }
 
     auto stop = std::chrono::high_resolution_clock::now();
@@ -136,6 +151,7 @@ void InferenceThread::loadExternalModel(juce::File modelPath) {
 #endif
 
     prepare(last_spec);
+    checkLatentOutput();
 
     auto shape = getInputShape(&session);
 
@@ -178,6 +194,7 @@ void InferenceThread::loadInternalModel(RaveModel modelToLoad) {
     if (! startUp){
         prepare(last_spec);
     }
+    checkLatentOutput();
 
     auto shape = getInputShape(&session);
 
@@ -198,6 +215,10 @@ std::vector<int> InferenceThread::getInputShape(Ort::Session *sess) {
         returnVec.push_back(static_cast<int>(dim));
     }
     return returnVec;
+}
+
+void InferenceThread::checkLatentOutput() {
+    hasLatentOutput = session.GetOutputCount() >= 2;
 }
 
 int InferenceThread::getLatency(){

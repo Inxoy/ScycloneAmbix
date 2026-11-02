@@ -46,7 +46,30 @@ public:
             COMP_MAKEUPGAIN_ID = {"param_comp_makeup", 1},
     
             OUTPUT_GAIN_ID = {"param_output_gain", 1},
-            DRY_WET_ID = {"param_mix", 1}
+            DRY_WET_ID = {"param_mix", 1},
+
+            AMBI_AZIMUTH_NETWORK1_ID = {"ambi_azimuth_network1", 1},
+            AMBI_ELEVATION_NETWORK1_ID = {"ambi_elevation_network1", 1},
+            AMBI_SPREAD_NETWORK1_ID = {"ambi_spread_network1", 1},
+            AMBI_AZIMUTH_DEPTH_NETWORK1_ID = {"ambi_azimuth_depth_network1", 1},
+            AMBI_ELEVATION_DEPTH_NETWORK1_ID = {"ambi_elevation_depth_network1", 1},
+            AMBI_SPREAD_DEPTH_NETWORK1_ID = {"ambi_spread_depth_network1", 1},
+            AMBI_AZIMUTH_LATENT_NETWORK1_ID = {"ambi_azimuth_latent_network1", 1},
+            AMBI_ELEVATION_LATENT_NETWORK1_ID = {"ambi_elevation_latent_network1", 1},
+            AMBI_SPREAD_LATENT_NETWORK1_ID = {"ambi_spread_latent_network1", 1},
+
+            AMBI_AZIMUTH_NETWORK2_ID = {"ambi_azimuth_network2", 1},
+            AMBI_ELEVATION_NETWORK2_ID = {"ambi_elevation_network2", 1},
+            AMBI_SPREAD_NETWORK2_ID = {"ambi_spread_network2", 1},
+            AMBI_AZIMUTH_DEPTH_NETWORK2_ID = {"ambi_azimuth_depth_network2", 1},
+            AMBI_ELEVATION_DEPTH_NETWORK2_ID = {"ambi_elevation_depth_network2", 1},
+            AMBI_SPREAD_DEPTH_NETWORK2_ID = {"ambi_spread_depth_network2", 1},
+            AMBI_AZIMUTH_LATENT_NETWORK2_ID = {"ambi_azimuth_latent_network2", 1},
+            AMBI_ELEVATION_LATENT_NETWORK2_ID = {"ambi_elevation_latent_network2", 1},
+            AMBI_SPREAD_LATENT_NETWORK2_ID = {"ambi_spread_latent_network2", 1},
+
+            AMBI_SMOOTHING_ID = {"ambi_smoothing", 1},
+            AMBI_DRY_WIDTH_ID = {"ambi_dry_width", 1}
             ;
     
     inline static const juce::String
@@ -88,7 +111,30 @@ public:
             OUTPUT_GAIN_NAME = "Output Gain",
 
             DRY_WET_NAME = "Global Mix",
-    
+
+            AMBI_AZIMUTH_NETWORK1_NAME = "Ambi Azimuth Network 1",
+            AMBI_ELEVATION_NETWORK1_NAME = "Ambi Elevation Network 1",
+            AMBI_SPREAD_NETWORK1_NAME = "Ambi Spread Network 1",
+            AMBI_AZIMUTH_DEPTH_NETWORK1_NAME = "Ambi Azimuth Latent Depth Network 1",
+            AMBI_ELEVATION_DEPTH_NETWORK1_NAME = "Ambi Elevation Latent Depth Network 1",
+            AMBI_SPREAD_DEPTH_NETWORK1_NAME = "Ambi Spread Latent Depth Network 1",
+            AMBI_AZIMUTH_LATENT_NETWORK1_NAME = "Ambi Azimuth Latent Dim Network 1",
+            AMBI_ELEVATION_LATENT_NETWORK1_NAME = "Ambi Elevation Latent Dim Network 1",
+            AMBI_SPREAD_LATENT_NETWORK1_NAME = "Ambi Spread Latent Dim Network 1",
+
+            AMBI_AZIMUTH_NETWORK2_NAME = "Ambi Azimuth Network 2",
+            AMBI_ELEVATION_NETWORK2_NAME = "Ambi Elevation Network 2",
+            AMBI_SPREAD_NETWORK2_NAME = "Ambi Spread Network 2",
+            AMBI_AZIMUTH_DEPTH_NETWORK2_NAME = "Ambi Azimuth Latent Depth Network 2",
+            AMBI_ELEVATION_DEPTH_NETWORK2_NAME = "Ambi Elevation Latent Depth Network 2",
+            AMBI_SPREAD_DEPTH_NETWORK2_NAME = "Ambi Spread Latent Depth Network 2",
+            AMBI_AZIMUTH_LATENT_NETWORK2_NAME = "Ambi Azimuth Latent Dim Network 2",
+            AMBI_ELEVATION_LATENT_NETWORK2_NAME = "Ambi Elevation Latent Dim Network 2",
+            AMBI_SPREAD_LATENT_NETWORK2_NAME = "Ambi Spread Latent Dim Network 2",
+
+            AMBI_SMOOTHING_NAME = "Ambi Smoothing",
+            AMBI_DRY_WIDTH_NAME = "Ambi Dry Width",
+
             // not automatable parameters
             ADVANCED_PARAMETER_CONTROL_VISIBLE_NAME = "advanced_parameter_control_visible",
             NETWORK1_NAME_NAME = "network1_name",
@@ -118,6 +164,10 @@ private:
     inline static juce::NormalisableRange<float> grainPitchRange{-12.f, 12.f, 0.01f};
     inline static juce::NormalisableRange<float> grainIntervalRange{.001f, 2.f, .0001f };
     inline static juce::NormalisableRange<float> grainSizeRange{10.f, 100.f, 0.1f };
+    inline static juce::NormalisableRange<float> azimuthRange{-180.f, 180.f, 0.1f};
+    inline static juce::NormalisableRange<float> elevationRange{-90.f, 90.f, 0.1f};
+    inline static juce::NormalisableRange<float> ambiSmoothingRange{10.f, 2000.f, 1.f, 0.4f};
+    inline static juce::NormalisableRange<float> dryWidthRange{0.f, 90.f, 0.1f};
 
 
     inline static juce::AudioParameterFloatAttributes ms_format = juce::AudioParameterFloatAttributes()
@@ -192,6 +242,18 @@ private:
                 juce::String returnString = juce::String{static_cast<int>(source1)} + " / " + juce::String{static_cast<int>(source2)};
                 return returnString; })
             .withValueFromStringFunction ([] (const juce::String& x) { return x.getFloatValue() / 100; });
+
+    inline static juce::AudioParameterFloatAttributes degree_attributes = juce::AudioParameterFloatAttributes()
+            .withStringFromValueFunction ([] (float x, auto) { return juce::String (x, 1); })
+            .withValueFromStringFunction ([] (const juce::String& x) { return x.getFloatValue(); })
+            .withLabel (juce::String::fromUTF8("\xc2\xb0"));
+
+    inline static juce::AudioParameterFloatAttributes ms_smoothing_attributes = juce::AudioParameterFloatAttributes()
+            .withStringFromValueFunction ([] (float x, auto) { return juce::String (std::roundf(x)) + " ms"; })
+            .withValueFromStringFunction ([] (const juce::String& x) { return x.getFloatValue(); })
+            .withLabel ("");
+
+    static juce::StringArray getLatentDimensionChoices();
 
 
 //    inline static juce::ValueTreePropertyWithDefault network1NameProperty = juce::ValueTreePropertyWithDefault(notAutomatableParameters, NETWORK1_NAME_NAME,

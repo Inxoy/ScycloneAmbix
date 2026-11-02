@@ -55,7 +55,7 @@ juce_add_plugin(${TARGET_NAME}
 		# EDITOR_WANTS_KEYBOARD_FOCUS TRUE/FALSE    # Does the editor need keyboard focus?
 		# COPY_PLUGIN_AFTER_BUILD TRUE/FALSE        # Should the plugin be installed to a default location after building?
 		PLUGIN_MANUFACTURER_CODE TORA               # A four-character manufacturer id with at least one upper-case character
-		PLUGIN_CODE SCYC                            # A unique four-character plugin id with exactly one upper-case character
+		PLUGIN_CODE Scya                            # A unique four-character plugin id with exactly one upper-case character
 		# GarageBand 10.3 requires the first letter to be upper-case, and the remaining letters to be lower-case
 
 		if(APPLE)
@@ -66,7 +66,7 @@ juce_add_plugin(${TARGET_NAME}
 		endif()
 
 		FORMATS ${FORMATS_TO_BUILD}                    # The formats to build. Other valid formats are: AAX Unity VST AU AUv3
-		PRODUCT_NAME "Scyclone"			            # The name of the final executable, which can differ from the target name
+		PRODUCT_NAME "ScycloneAmbix"	            # The name of the final executable, which can differ from the target name
 		)
 
 # `juce_generate_juce_header` will create a JuceHeader.h for a given target, which will be generated
@@ -180,3 +180,22 @@ target_link_libraries(${TARGET_NAME}
 		juce::juce_recommended_lto_flags
 		juce::juce_recommended_warning_flags
 )
+
+# Offline checks of the ambisonic encoding, enable with -DSCYCLONE_BUILD_TESTS=ON
+option(SCYCLONE_BUILD_TESTS "Build the ScycloneAmbixTest console app" OFF)
+if (SCYCLONE_BUILD_TESTS)
+	juce_add_console_app(ScycloneAmbixTest PRODUCT_NAME "ScycloneAmbixTest")
+	set_property(TARGET ScycloneAmbixTest PROPERTY CXX_STANDARD 17)
+	target_sources(ScycloneAmbixTest PRIVATE tests/AmbisonicTest.cpp)
+	# same include paths as the plugin, including its generated JuceHeader.h
+	# the JUCE module code is already compiled into the plugin's shared code library, so only
+	# its include paths and definitions are used here
+	get_target_property(SCYCLONE_INCLUDE_DIRECTORIES ${TARGET_NAME} INCLUDE_DIRECTORIES)
+	get_target_property(SCYCLONE_COMPILE_DEFINITIONS ${TARGET_NAME} COMPILE_DEFINITIONS)
+	target_include_directories(ScycloneAmbixTest PRIVATE
+			${CMAKE_CURRENT_LIST_DIR}/source
+			${CMAKE_CURRENT_LIST_DIR}/modules/JUCE/modules
+			${SCYCLONE_INCLUDE_DIRECTORIES})
+	target_compile_definitions(ScycloneAmbixTest PRIVATE ${SCYCLONE_COMPILE_DEFINITIONS})
+	target_link_libraries(ScycloneAmbixTest PRIVATE ${TARGET_NAME} BinaryData)
+endif()

@@ -19,6 +19,7 @@ public:
     
     void prepare(const juce::dsp::ProcessSpec &spec);
     void processBlock(juce::AudioBuffer<float>& buffer);
+    void setFirstChannelDetection(bool shouldUseFirstChannelOnly);
     void parameterChanged(const juce::String &parameterID, float newValue);
 
 private:

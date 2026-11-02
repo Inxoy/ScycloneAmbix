@@ -158,9 +158,61 @@ juce::AudioProcessorValueTreeState::ParameterLayout PluginParameters::createPara
                                                               0.7f,
                                                               percentage_attributes));
 
+    // ambisonic (AmbiX) encoding, each network is a point source steered by its latent space
+    struct AmbiParameterSet {
+        juce::ParameterID azimuthID, elevationID, spreadID, azimuthDepthID, elevationDepthID, spreadDepthID,
+                azimuthLatentID, elevationLatentID, spreadLatentID;
+        juce::String azimuthName, elevationName, spreadName, azimuthDepthName, elevationDepthName, spreadDepthName,
+                azimuthLatentName, elevationLatentName, spreadLatentName;
+    };
 
+    const AmbiParameterSet ambiParameterSets[] = {
+            {AMBI_AZIMUTH_NETWORK1_ID, AMBI_ELEVATION_NETWORK1_ID, AMBI_SPREAD_NETWORK1_ID,
+             AMBI_AZIMUTH_DEPTH_NETWORK1_ID, AMBI_ELEVATION_DEPTH_NETWORK1_ID, AMBI_SPREAD_DEPTH_NETWORK1_ID,
+             AMBI_AZIMUTH_LATENT_NETWORK1_ID, AMBI_ELEVATION_LATENT_NETWORK1_ID, AMBI_SPREAD_LATENT_NETWORK1_ID,
+             AMBI_AZIMUTH_NETWORK1_NAME, AMBI_ELEVATION_NETWORK1_NAME, AMBI_SPREAD_NETWORK1_NAME,
+             AMBI_AZIMUTH_DEPTH_NETWORK1_NAME, AMBI_ELEVATION_DEPTH_NETWORK1_NAME, AMBI_SPREAD_DEPTH_NETWORK1_NAME,
+             AMBI_AZIMUTH_LATENT_NETWORK1_NAME, AMBI_ELEVATION_LATENT_NETWORK1_NAME, AMBI_SPREAD_LATENT_NETWORK1_NAME},
+            {AMBI_AZIMUTH_NETWORK2_ID, AMBI_ELEVATION_NETWORK2_ID, AMBI_SPREAD_NETWORK2_ID,
+             AMBI_AZIMUTH_DEPTH_NETWORK2_ID, AMBI_ELEVATION_DEPTH_NETWORK2_ID, AMBI_SPREAD_DEPTH_NETWORK2_ID,
+             AMBI_AZIMUTH_LATENT_NETWORK2_ID, AMBI_ELEVATION_LATENT_NETWORK2_ID, AMBI_SPREAD_LATENT_NETWORK2_ID,
+             AMBI_AZIMUTH_NETWORK2_NAME, AMBI_ELEVATION_NETWORK2_NAME, AMBI_SPREAD_NETWORK2_NAME,
+             AMBI_AZIMUTH_DEPTH_NETWORK2_NAME, AMBI_ELEVATION_DEPTH_NETWORK2_NAME, AMBI_SPREAD_DEPTH_NETWORK2_NAME,
+             AMBI_AZIMUTH_LATENT_NETWORK2_NAME, AMBI_ELEVATION_LATENT_NETWORK2_NAME, AMBI_SPREAD_LATENT_NETWORK2_NAME}
+    };
 
+    for (const auto & set : ambiParameterSets) {
+        params.push_back(std::make_unique<juce::AudioParameterFloat>(set.azimuthID, set.azimuthName,
+                                                                     azimuthRange, 0.f, degree_attributes));
+        params.push_back(std::make_unique<juce::AudioParameterFloat>(set.elevationID, set.elevationName,
+                                                                     elevationRange, 0.f, degree_attributes));
+        params.push_back(std::make_unique<juce::AudioParameterFloat>(set.spreadID, set.spreadName,
+                                                                     dryWetRange, 0.f, percentage_attributes));
+        params.push_back(std::make_unique<juce::AudioParameterFloat>(set.azimuthDepthID, set.azimuthDepthName,
+                                                                     dryWetRange, 0.5f, percentage_attributes));
+        params.push_back(std::make_unique<juce::AudioParameterFloat>(set.elevationDepthID, set.elevationDepthName,
+                                                                     dryWetRange, 0.25f, percentage_attributes));
+        params.push_back(std::make_unique<juce::AudioParameterFloat>(set.spreadDepthID, set.spreadDepthName,
+                                                                     dryWetRange, 0.f, percentage_attributes));
+        params.push_back(std::make_unique<juce::AudioParameterChoice>(set.azimuthLatentID, set.azimuthLatentName,
+                                                                      getLatentDimensionChoices(), 0));
+        params.push_back(std::make_unique<juce::AudioParameterChoice>(set.elevationLatentID, set.elevationLatentName,
+                                                                      getLatentDimensionChoices(), 1));
+        params.push_back(std::make_unique<juce::AudioParameterChoice>(set.spreadLatentID, set.spreadLatentName,
+                                                                      getLatentDimensionChoices(), 2));
+    }
 
+    params.push_back(std::make_unique<juce::AudioParameterFloat>(AMBI_SMOOTHING_ID,
+                                                                 AMBI_SMOOTHING_NAME,
+                                                                 ambiSmoothingRange,
+                                                                 150.f,
+                                                                 ms_smoothing_attributes));
+
+    params.push_back(std::make_unique<juce::AudioParameterFloat>(AMBI_DRY_WIDTH_ID,
+                                                                 AMBI_DRY_WIDTH_NAME,
+                                                                 dryWidthRange,
+                                                                 30.f,
+                                                                 degree_attributes));
 
     for (const auto & param : params) {
         parameterList.add(param->getParameterID());
@@ -182,6 +234,13 @@ void PluginParameters::removeNotAutomatableParameterLayout(juce::ValueTree notAu
     notAutomatableParameters.removeProperty(ADVANCED_PARAMETER_CONTROL_VISIBLE_NAME, nullptr);
     notAutomatableParameters.removeProperty(NETWORK1_NAME_NAME, nullptr);
     notAutomatableParameters.removeProperty(NETWORK2_NAME_NAME, nullptr);
+}
+
+juce::StringArray PluginParameters::getLatentDimensionChoices() {
+    juce::StringArray choices;
+    for (int i = 1; i <= 16; ++i)
+        choices.add("Latent " + juce::String(i));
+    return choices;
 }
 
 juce::StringArray PluginParameters::getPluginParameterList() {

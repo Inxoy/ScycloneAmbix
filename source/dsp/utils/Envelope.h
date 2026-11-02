@@ -21,6 +21,8 @@ public:
     float getReleaseTime() const;
     void processBlock(juce::AudioBuffer<float>& buffer);
     float getSample(unsigned long sample);
+    // when set, only the first channel is used for detection (W of an ambisonic signal)
+    void setFirstChannelDetection(bool shouldUseFirstChannelOnly);
 
 private:
     void setSampleRate(float newSampleRate);
@@ -35,6 +37,7 @@ private:
     float attackCoefficient = 1.f;
     float releaseCoefficient = 1.f;
     float sampleRate = 48000.f;
+    bool firstChannelDetection = false;
 };
 
 #endif

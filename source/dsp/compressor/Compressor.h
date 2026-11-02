@@ -75,13 +75,17 @@ public:
 
     void setCompressionTypeIndex(int newCompressionTypeIndex);
 
+    // detect level on the first channel only and apply the gain to all channels
+    void setFirstChannelDetection(bool shouldUseFirstChannelOnly);
+
     int getCompressionTypeIndex() const;
     
 private:
     CompressorParameter parameter {0.f, 4.0f, 4.0f, 0.0f, 80.0f, 0.05f, 0.3f, true, Upward};
     AutoMakeUpGain autoMakeUpGain;
     Envelope envelope;
-    
+    bool firstChannelDetection = false;
+
     void copyAutoMakeUpBuffer(juce::AudioBuffer<float>& target, juce::AudioBuffer<float>& source, bool input);
 };
 

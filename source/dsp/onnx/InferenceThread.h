@@ -25,8 +25,11 @@ public:
     void sendAudio(juce::AudioBuffer<float>& buffer);
     void setExternalModel(juce::File modelPath);
     int getLatency();
+    int getModelInputSize() const { return modelInputSize; }
 
     std::function<int(juce::AudioBuffer<float> buffer)> onNewProcessedBuffer;
+    // latent data is laid out as [dimension][frame], called before onNewProcessedBuffer
+    std::function<void(const float* latent, int numDimensions, int numFrames)> onNewLatentFrames;
     std::function<void(juce::String modelName)> onModelLoaded;
     
     bool init = true;
@@ -40,6 +43,7 @@ private:
     void loadExternalModel(juce::File modelPath);
     void loadInternalModel(RaveModel modelToLoad);
     std::vector<int> getInputShape(Ort::Session *sess);
+    void checkLatentOutput();
 
 private:
     bool startUp = true;
@@ -60,5 +64,7 @@ private:
     RingBuffer receiveRingBuffer;
 
     bool loadingModel = false;
+    // models exported with tools/add_latent_output.py provide the latent as second output
+    bool hasLatentOutput = false;
 };
 #endif //VAESYNTH_INFERENCETHREAD_H

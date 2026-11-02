@@ -11,6 +11,7 @@
 #include "dsp/gain/ProcessorGain.h"
 #include "dsp/Filter/IIRCutoffFilter.h"
 #include "dsp/grainDelay/GrainDelay.h"
+#include "dsp/ambisonics/ProcessorAmbisonics.h"
 
 
 //==============================================================================
@@ -64,6 +65,10 @@ public:
     juce::AudioVisualiserComponent& getAudioVisualiser2();
     float getCurrentLevel(int index);
     void setLevelType(LevelType newLevelType);
+    // ambisonic order of the output bus, -1 when the output is mono or stereo
+    int getAmbisonicOrder() const { return ambisonicOrder; }
+    float getAmbisonicAzimuth(int network) const { return processorAmbisonics.getCurrentAzimuth(network); }
+    float getAmbisonicElevation(int network) const { return processorAmbisonics.getCurrentElevation(network); }
 
     std::function<void(int modelID, juce::String& modelName)> setExternalModelName;
     void setInitialMuteParameters();
@@ -75,8 +80,10 @@ public:
 
 private:
     void parameterChanged (const juce::String& parameterID, float newValue) override;
-    static void stereoToMono(juce::AudioBuffer<float>& targetMonoBlock, juce::AudioBuffer<float>& sourceBlock);
+    static void stereoToMono(juce::AudioBuffer<float>& targetMonoBlock, juce::AudioBuffer<float>& sourceBlock, int numSourceChannels);
     static void monoToStereo(juce::AudioBuffer<float>& targetStereoBlock, juce::AudioBuffer<float>& sourceBlock);
+    void processNetworks();
+    void processAmbisonicOutput(juce::AudioBuffer<float>& buffer);
 
 private:
     juce::AudioProcessorValueTreeState parameters;
@@ -116,6 +123,11 @@ private:
 
     GrainDelay grainDelay1;
     GrainDelay grainDelay2;
+
+    ProcessorAmbisonics processorAmbisonics;
+    juce::AudioBuffer<float> ambiBuffer;
+    juce::AudioBuffer<float> ambiDryBuffer;
+    int ambisonicOrder = -1;
 
     //==============================================================================
     JUCE_HEAVYWEIGHT_LEAK_DETECTOR (AudioPluginAudioProcessor)

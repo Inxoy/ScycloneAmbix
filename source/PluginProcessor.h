@@ -80,6 +80,10 @@ public:
         if (id == 1) onnxProcessor1.loadExternalModel(path);
         if (id == 2) onnxProcessor2.loadExternalModel(path);
     }
+    /** loads entry `index` of ModelLibrary into network 1 or 2 and remembers it in the session */
+    void selectModel(int network, int index);
+    juce::String getModelName(int network) const { return loadedModelName[network == 1 ? 0 : 1]; }
+    std::function<void()> onModelChanged;
 
 private:
     void parameterChanged (const juce::String& parameterID, float newValue) override;
@@ -87,6 +91,9 @@ private:
     static void monoToStereo(juce::AudioBuffer<float>& targetStereoBlock, juce::AudioBuffer<float>& sourceBlock);
     void processNetworks();
     void processAmbisonicOutput(juce::AudioBuffer<float>& buffer);
+    void modelLoaded(int network, const juce::String& modelName);
+    void restoreModels();
+    juce::String loadedModelName[2] {"Funk", "Djembe"};
 
 private:
     juce::AudioProcessorValueTreeState parameters;

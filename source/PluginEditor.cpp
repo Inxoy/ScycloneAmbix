@@ -2,153 +2,176 @@
 #include "PluginEditor.h"
 #include "PluginParameters.h"
 
+using namespace scyclone::ui;
+
 //==============================================================================
 AudioPluginAudioProcessorEditor::AudioPluginAudioProcessorEditor (AudioPluginAudioProcessor& p, juce::AudioProcessorValueTreeState& parameters)
-    : AudioProcessorEditor (&p), apvts(parameters), processorRef (p), transientViewer(p), openGLBackground(parameters, p), advancedParameterControl(parameters), spatialPanel(p, parameters), parameterControl(parameters)
+    : AudioProcessorEditor (&p), processorRef (p), apvts (parameters),
+      network1 (p, parameters, 1), network2 (p, parameters, 2),
+      fieldPad (p, parameters), master (parameters), space (p, parameters)
 {
-    juce::ignoreUnused (processorRef);
+    setLookAndFeel (&lookAndFeel);
+    juce::LookAndFeel::setDefaultLookAndFeel (&lookAndFeel);     // popup menus and alert windows
 
-    for (auto & parameterID : PluginParameters::getPluginParameterList()) {
-        parameters.addParameterListener(parameterID, this);
+    apvts.addParameterListener (PluginParameters::SELECT_NETWORK1_ID.getParamID(), this);
+    apvts.addParameterListener (PluginParameters::SELECT_NETWORK2_ID.getParamID(), this);
+
+    for (auto* c : { (juce::Component*) &network1, (juce::Component*) &network2, (juce::Component*) &fieldPad, (juce::Component*) &master })
+        addAndMakeVisible (c);
+    addChildComponent (space);
+
+    network1.onLoadFile = network2.onLoadFile = [this] (int n) { openFileChooser (n); };
+    processorRef.onModelChanged = [safe = juce::Component::SafePointer<AudioPluginAudioProcessorEditor> (this)]
+    {
+        juce::MessageManager::callAsync ([safe]
+        {
+            if (safe == nullptr) return;
+            safe->network1.refreshModel();
+            safe->network2.refreshModel();
+        });
+    };
+
+    const char* names[] { "Networks", "Space" };
+    for (int i = 0; i < 2; ++i)
+    {
+        tabs[i].setButtonText (juce::String (names[i]).toUpperCase());
+        tabs[i].onClick = [this, i] { showPage (i); };
+        addAndMakeVisible (tabs[i]);
+    }
+    tabs[0].setTooltip ("The two networks, the field and the master section");
+    tabs[1].setTooltip ("Where the networks sound in the ambisonic field and how the latent moves them");
+    showPage (processorRef.advancedParameterControlVisible.getValue() ? 1 : 0);
+
+    // grain over the whole interface and darkened edges, like an old print; rendered once
+    grainLayer = juce::Image (juce::Image::ARGB, width, height, true);
+    {
+        juce::Graphics g (grainLayer);
+        drawGrain (g, { 0, 0, width, height }, 1.0f);
+    }
+    vignette = juce::Image (juce::Image::ARGB, width, height, true);
+    {
+        juce::Graphics g (vignette);
+        juce::ColourGradient grad (juce::Colours::transparentBlack, width * 0.5f, height * 0.48f,
+                                   juce::Colours::black.withAlpha (0.22f), 0.0f, 0.0f, true);
+        grad.addColour (0.7, juce::Colours::transparentBlack);
+        g.setGradientFill (grad);
+        g.fillRect (0, 0, width, height);
     }
 
-    juce::LookAndFeel::setDefaultLookAndFeel (&customFontLookAndFeel);
-
-    headerComponent = std::make_unique<HeaderComponent>(p, parameters);
-
-    headerComponent->onParameterControlViewChange = [this](bool newState)
-    {
-        // also called on hover, only an actual toggle of the detail button leaves the spatial view
-        if (newState != detailViewState) {
-            detailViewState = newState;
-            headerComponent->spatialButton.setToggleState(false, juce::dontSendNotification);
-        }
-        updateParameterView();
-    };
-    headerComponent->onSpatialViewChange = [this](bool)
-    {
-        updateParameterView();
-    };
-
-    addAndMakeVisible(headerComponent.get());
-    addAndMakeVisible(openGLBackground);
-    addAndMakeVisible(advancedParameterControl);
-//    advancedParameterControl.setVisible(false);
-    addChildComponent(spatialPanel);
-    addAndMakeVisible(parameterControl);
-    addAndMakeVisible(transientViewer);
-    addAndMakeVisible(textureComponent);
-    bool state = processorRef.advancedParameterControlVisible.getValue();
-
-    headerComponent->detailButton.setToggleState(state, juce::sendNotification);
-    updateParameterView();
-
-    // Make sure that before the constructor has finished, you've set the
-    // editor's size to whatever you need it to be.
-    setSize (1400, 700);
-
-    processorRef.setExternalModelName = [this] (int modelID, juce::String& modelName) {
-        openGLBackground.externalModelLoaded(modelID, modelName);
-    };
-
-    //setResizable(false, false);
-    // dirty work around to make the blobs appear correctly from the beginning
-    auto fadeParam = parameters.getParameter(PluginParameters::FADE_ID.getParamID());
-    auto fadeStatus = fadeParam->getValue();
-    fadeParam->setValueNotifyingHost(0.5f*fadeStatus);
-    fadeParam->setValueNotifyingHost(fadeStatus);
+    setSize (width, height);
+    startTimerHz (4);
 }
 
 AudioPluginAudioProcessorEditor::~AudioPluginAudioProcessorEditor()
 {
+    stopTimer();
+    processorRef.onModelChanged = nullptr;
+    apvts.removeParameterListener (PluginParameters::SELECT_NETWORK1_ID.getParamID(), this);
+    apvts.removeParameterListener (PluginParameters::SELECT_NETWORK2_ID.getParamID(), this);
     juce::LookAndFeel::setDefaultLookAndFeel (nullptr);
-    for (auto & parameterID : PluginParameters::getPluginParameterList()) {
-        apvts.removeParameterListener(parameterID, this);
-    }
+    setLookAndFeel (nullptr);
+}
+
+void AudioPluginAudioProcessorEditor::showPage (int newPage)
+{
+    page = newPage;
+    // the old "detail view" flag now remembers the page
+    processorRef.advancedParameterControlVisible = page == 1;
+    for (int i = 0; i < 2; ++i) tabs[i].setToggleState (i == page, juce::dontSendNotification);
+    for (auto* c : { (juce::Component*) &network1, (juce::Component*) &network2, (juce::Component*) &fieldPad, (juce::Component*) &master })
+        c->setVisible (page == 0);
+    space.setVisible (page == 1);
+}
+
+juce::String AudioPluginAudioProcessorEditor::outputDescription() const
+{
+    const int order = processorRef.getAmbisonicOrder();
+    if (order > 0) return "AmbiX order " + juce::String (order) + juce::String::fromUTF8 (" \xc2\xb7 ") + juce::String ((order + 1) * (order + 1)) + " ch";
+    return "stereo";
+}
+
+void AudioPluginAudioProcessorEditor::timerCallback()
+{
+    const auto o = outputDescription();
+    if (o != shownOutput) { shownOutput = o; repaint (0, 0, width, headerHeight); }
 }
 
 //==============================================================================
 void AudioPluginAudioProcessorEditor::paint (juce::Graphics& g)
 {
-    // (Our component is opaque, so we must completely fill the background with a solid colour)
-    g.fillAll(juce::Colour::fromString(ColorPallete::BG));
+    auto& A = Assets::get();
+    g.fillAll (col::bg);
+    g.setColour (col::border);
+    g.fillRect (0, headerHeight - 4, width, 1);
+    g.setColour (col::line);
+    g.fillRect (0, headerHeight - 1, width, 1);
+
+    // "Scyclone" with a rubricated S, "ambix" in italic after it
+    auto head = juce::Rectangle<int> (0, 0, width, headerHeight).reduced (28, 0);
+    const auto big = A.title (34.0f);
+    const int sw = juce::roundToInt (big.getStringWidthFloat ("S"));
+    const int rest = juce::roundToInt (big.getStringWidthFloat ("cyclone"));
+    g.setFont (big);
+    g.setColour (col::rubric.brighter (0.2f));
+    g.drawText ("S", head.withWidth (sw + 4).translated (0, 2), juce::Justification::centredLeft);
+    g.setColour (col::ink);
+    g.drawText ("cyclone", head.withTrimmedLeft (sw).withWidth (rest + 4).translated (0, 2), juce::Justification::centredLeft);
+    g.setFont (A.italic (17.0f));
+    g.setColour (col::mute);
+    g.drawText ("ambix", head.withTrimmedLeft (sw + rest + 8).withWidth (80).translated (0, 6), juce::Justification::centredLeft);
+
+    g.setFont (A.italic (12.0f));
+    g.setColour (col::faint);
+    g.drawText (shownOutput.isEmpty() ? outputDescription() : shownOutput, head.withTrimmedLeft (head.getWidth() - 220),
+                juce::Justification::centredRight);
+}
+
+void AudioPluginAudioProcessorEditor::paintOverChildren (juce::Graphics& g)
+{
+    g.drawImageAt (vignette, 0, 0);
+    g.setOpacity (0.22f);
+    g.drawImageAt (grainLayer, 0, 0);
 }
 
 void AudioPluginAudioProcessorEditor::resized()
 {
-    auto r = getLocalBounds();
-    r.removeFromTop(20);
-    auto headerSection = r.removeFromTop(32);
-    auto padSection = r.removeFromLeft(700);
-    auto miniMapSection = r.removeFromLeft(176);
-    r.removeFromLeft(45);
-    auto sliderSection = r;
+    int x = 236;
+    const int tw[] { 104, 80 };
+    for (int i = 0; i < 2; ++i) { tabs[i].setBounds (x, 13, tw[i], 30); x += tw[i] + 3; }
 
-    juce::ignoreUnused(headerSection, miniMapSection, sliderSection);
+    auto body = getLocalBounds().withTrimmedTop (headerHeight).reduced (28, 18);
+    space.setBounds (getLocalBounds().withTrimmedTop (headerHeight));
 
-    openGLBackground.setBounds(padSection);
-    transientViewer.setBounds(710, 450, 163, 163);
-    advancedParameterControl.setBounds(765, 60, 600, 600);
-    spatialPanel.setBounds(765, 60, 600, 600);
-
-
-    auto areaParameter = getLocalBounds().removeFromRight(static_cast<int>((float)getWidth()*0.4f));
-    areaParameter.removeFromTop(40);
-    parameterControl.setBounds(areaParameter);
-    headerComponent->setBounds(getLocalBounds());
-    textureComponent.setBounds(getLocalBounds());
-
-    processorRef.onNetwork1NameChange(processorRef.network1Name.toString());
-    processorRef.onNetwork2NameChange(processorRef.network2Name.toString());
+    network1.setBounds (body.removeFromLeft (300));
+    network2.setBounds (body.removeFromRight (300));
+    body.reduce (28, 0);
+    master.setBounds (body.removeFromBottom (34 + 4 * (ParamRow::preferredHeight + 2)));
+    body.removeFromBottom (14);
+    fieldPad.setBounds (body);
 }
 
-void AudioPluginAudioProcessorEditor::updateParameterView() {
-    const bool spatial = headerComponent->spatialButton.getToggleState();
-    const bool advanced = !spatial && headerComponent->detailButton.getToggleState();
-
-    spatialPanel.setVisible(spatial);
-    advancedParameterControl.setVisible(advanced);
-    parameterControl.setVisible(!spatial && !advanced);
-    transientViewer.setVisible(!spatial && !advanced);
+void AudioPluginAudioProcessorEditor::parameterChanged (const juce::String& parameterID, float newValue)
+{
+    // a host (or an old session) can still ask for the file chooser through these
+    if (newValue < 0.5f) return;
+    const int n = parameterID == PluginParameters::SELECT_NETWORK1_ID.getParamID() ? 1
+                : parameterID == PluginParameters::SELECT_NETWORK2_ID.getParamID() ? 2 : 0;
+    if (n == 0) return;
+    juce::MessageManager::callAsync ([safe = juce::Component::SafePointer<AudioPluginAudioProcessorEditor> (this), n]
+    {
+        if (safe != nullptr) safe->openFileChooser (n);
+    });
 }
 
-void AudioPluginAudioProcessorEditor::parameterChanged(const juce::String &parameterID, float newValue) {
-    parameterControl.parameterChanged(parameterID, newValue);
-    if (parameterID == PluginParameters::SELECT_NETWORK1_ID.getParamID() && newValue == 1.f) {
-        openFileChooser(1);
-    } else if (parameterID == PluginParameters::SELECT_NETWORK2_ID.getParamID() && newValue == 1.f) {
-        openFileChooser(2);
-    }
-}
-
-void AudioPluginAudioProcessorEditor::openFileChooser(int networkID) {
-    fc = std::make_unique<juce::FileChooser> ("Choose a file to open...", juce::File::getSpecialLocation(juce::File::SpecialLocationType::userHomeDirectory),
-                                              "*.ort", true);
-
-    fc->launchAsync (juce::FileBrowserComponent::openMode
-                     | juce::FileBrowserComponent::canSelectFiles,
+void AudioPluginAudioProcessorEditor::openFileChooser (int networkID)
+{
+    fc = std::make_unique<juce::FileChooser> ("Load a RAVE model (.ort) into network " + networkNumeral (networkID),
+                                              juce::File::getSpecialLocation (juce::File::userHomeDirectory), "*.ort", true);
+    fc->launchAsync (juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectFiles,
                      [this, networkID] (const juce::FileChooser& chooser)
                      {
-                         juce::File chosen;
-                         auto results = chooser.getURLResults();
-
-                         for (const auto& result : results) {
-                             if (result.isLocalFile()) {
-                                 chosen = result.getLocalFile();
-                             }
-                             else
-                             {
-                                 return;
-                             }
-
-                         }
-
-                         if (chosen.getSize() != 0) {
-                             processorRef.loadExternalModel(chosen.getFullPathName(), networkID);
-                         } else {
-                             auto param = (networkID == 1) ? PluginParameters::SELECT_NETWORK1_ID.getParamID() : PluginParameters::SELECT_NETWORK2_ID.getParamID();
-                             apvts.getParameter(param)->setValueNotifyingHost(0.f);
-                         }
-
+                         const auto chosen = chooser.getResult();
+                         if (chosen.existsAsFile() && chosen.getSize() > 0)
+                             processorRef.loadExternalModel (chosen, networkID);
                      });
 }

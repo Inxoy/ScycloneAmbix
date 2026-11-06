@@ -151,9 +151,21 @@ if (APPLE)
 elseif (MSVC)
 	set_property(TARGET onnxruntime APPEND PROPERTY IMPORTED_CONFIGURATIONS RELEASE)
 
+	# The library in modules/onnxruntime is a reduced build with only the operators of the two
+	# built-in models. The converted RAVE models (tools/convert_rave_ts.py) need a full build:
+	# tools/build_onnxruntime_windows.bat makes one in modules/onnxruntime-full (~570 MB, too
+	# large for git), which is used when it is there.
+	set(SCYCLONE_ONNXRUNTIME_FULL_LIB "${CMAKE_CURRENT_LIST_DIR}/modules/onnxruntime-full/lib/onnxruntime-win-x64.lib")
+	if (EXISTS "${SCYCLONE_ONNXRUNTIME_FULL_LIB}")
+		message(STATUS "onnxruntime: full build, RAVE models from the Models folder can run")
+		set(SCYCLONE_ONNXRUNTIME_LIB "${SCYCLONE_ONNXRUNTIME_FULL_LIB}")
+	else()
+		message(STATUS "onnxruntime: reduced build, only the built-in models run (see tools/build_onnxruntime_windows.bat)")
+		set(SCYCLONE_ONNXRUNTIME_LIB "${CMAKE_CURRENT_LIST_DIR}/modules/onnxruntime/lib/onnxruntime-win-x64.lib")
+	endif()
 	set_target_properties(onnxruntime PROPERTIES
 			IMPORTED_LINK_INTERFACE_LANGUAGES_RELEASE "CXX"
-			IMPORTED_LOCATION_RELEASE "${CMAKE_CURRENT_LIST_DIR}/modules/onnxruntime/lib/onnxruntime-win-x64.lib"
+			IMPORTED_LOCATION_RELEASE "${SCYCLONE_ONNXRUNTIME_LIB}"
 			)
 	set_target_properties(onnxruntime PROPERTIES
 			MAP_IMPORTED_CONFIG_DEBUG Release
@@ -212,4 +224,26 @@ if (SCYCLONE_BUILD_TESTS)
 			${SCYCLONE_INCLUDE_DIRECTORIES})
 	target_compile_definitions(ScycloneAmbixTest PRIVATE ${SCYCLONE_COMPILE_DEFINITIONS})
 	target_link_libraries(ScycloneAmbixTest PRIVATE ${TARGET_NAME} BinaryData)
+
+	# renders the editor's pages to PNG: ScycloneUiSnapshot <folder>
+	juce_add_console_app(ScycloneUiSnapshot PRODUCT_NAME "ScycloneUiSnapshot")
+	set_property(TARGET ScycloneUiSnapshot PROPERTY CXX_STANDARD 17)
+	target_sources(ScycloneUiSnapshot PRIVATE tests/UiSnapshot.cpp)
+	target_include_directories(ScycloneUiSnapshot PRIVATE
+			${CMAKE_CURRENT_LIST_DIR}/source
+			${CMAKE_CURRENT_LIST_DIR}/modules/JUCE/modules
+			${SCYCLONE_INCLUDE_DIRECTORIES})
+	target_compile_definitions(ScycloneUiSnapshot PRIVATE ${SCYCLONE_COMPILE_DEFINITIONS})
+	target_link_libraries(ScycloneUiSnapshot PRIVATE ${TARGET_NAME} BinaryData)
+
+	# runs every model of the Models folders through the plugin in real time
+	juce_add_console_app(ScycloneModelTest PRODUCT_NAME "ScycloneModelTest")
+	set_property(TARGET ScycloneModelTest PROPERTY CXX_STANDARD 17)
+	target_sources(ScycloneModelTest PRIVATE tests/ModelRunTest.cpp)
+	target_include_directories(ScycloneModelTest PRIVATE
+			${CMAKE_CURRENT_LIST_DIR}/source
+			${CMAKE_CURRENT_LIST_DIR}/modules/JUCE/modules
+			${SCYCLONE_INCLUDE_DIRECTORIES})
+	target_compile_definitions(ScycloneModelTest PRIVATE ${SCYCLONE_COMPILE_DEFINITIONS})
+	target_link_libraries(ScycloneModelTest PRIVATE ${TARGET_NAME} BinaryData)
 endif()

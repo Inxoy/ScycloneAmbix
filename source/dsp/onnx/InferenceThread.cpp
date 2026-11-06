@@ -17,7 +17,8 @@ InferenceThread::~InferenceThread() {
 void InferenceThread::prepare(const juce::dsp::ProcessSpec &spec) {
     // allocate enough memory
     receiveRingBuffer.initialise(1, (int) spec.sampleRate);
-    
+    resetStates();
+
     last_spec = spec;
     init = true;
     init_samples = 0;
@@ -42,6 +43,10 @@ void InferenceThread::sendAudio(juce::AudioBuffer<float> &buffer) {
 }
 
 void InferenceThread::run() {
+    if (streaming) {
+        runStreaming();
+        return;
+    }
 
     auto start = std::chrono::high_resolution_clock::now();
 
@@ -106,8 +111,8 @@ void InferenceThread::run() {
 //    ort_alloc.Free(inputName.get());
 }
 
-void InferenceThread::setExternalModel(juce::File modelPath) {
-    loadExternalModel(modelPath);
+void InferenceThread::setExternalModel(juce::File modelPath, const juce::String& name) {
+    loadExternalModel(modelPath, name);
 }
 
 void InferenceThread::modelInputSizeChanged(int newModelInputSize) {
@@ -118,7 +123,7 @@ void InferenceThread::modelInputSizeChanged(int newModelInputSize) {
     onnxOutputData.resize(newModelInputSize, 0.0f);
 }
 
-void InferenceThread::loadExternalModel(juce::File modelPath) {
+void InferenceThread::loadExternalModel(juce::File modelPath, const juce::String& name) {
     loadingModel = true;
 
     if (isThreadRunning()) {
@@ -158,11 +163,16 @@ void InferenceThread::loadExternalModel(juce::File modelPath) {
     for (int i = 0; i < shape.size(); ++i) {
 //        std::cout << "shape[" <<  i << "]: " << shape[i] << std::endl;
     }
-    onModelLoaded(modelPath.getFileNameWithoutExtension());
+    onModelLoaded(name.isNotEmpty() ? name : modelPath.getFileNameWithoutExtension());
     loadingModel = false;
 }
 
-void InferenceThread::loadInternalModel(RaveModel modelToLoad) {
+void InferenceThread::setEmbeddedModel(RaveModel model, const juce::String& name) {
+    currentLevel = model;
+    loadInternalModel(model, name);
+}
+
+void InferenceThread::loadInternalModel(RaveModel modelToLoad, const juce::String& name) {
     loadingModel = true;
 
     if (isThreadRunning()) {
@@ -202,7 +212,7 @@ void InferenceThread::loadInternalModel(RaveModel modelToLoad) {
 //        std::cout << "shape[" <<  i << "]: " << shape[i] << std::endl;
     }
     if (! startUp){
-        onModelLoaded("");
+        onModelLoaded(name);
     }
     loadingModel = false;
     startUp = false;
@@ -218,11 +228,131 @@ std::vector<int> InferenceThread::getInputShape(Ort::Session *sess) {
 }
 
 void InferenceThread::checkLatentOutput() {
-    hasLatentOutput = session.GetOutputCount() >= 2;
+    inspectModel();
+}
+
+void InferenceThread::inspectModel() {
+    Ort::AllocatorWithDefaultOptions allocator;
+
+    inputNames.clear();
+    outputNames.clear();
+    for (size_t i = 0; i < session.GetInputCount(); ++i)
+        inputNames.emplace_back(session.GetInputNameAllocated(i, allocator).get());
+    for (size_t i = 0; i < session.GetOutputCount(); ++i)
+        outputNames.emplace_back(session.GetOutputNameAllocated(i, allocator).get());
+
+    auto metadataValue = [&] (const char* key) -> std::string {
+        auto metadata = session.GetModelMetadata();
+        auto value = metadata.LookupCustomMetadataMapAllocated(key, allocator);
+        return value ? std::string(value.get()) : std::string();
+    };
+
+    streaming = metadataValue("streaming") == "1";
+    const auto rate = metadataValue("sample_rate");
+    modelSampleRate = (streaming && !rate.empty()) ? std::stod(rate) : 48000.0;
+
+    states.clear();
+    audioOutputIndex = 0;
+    latentOutputIndex = outputNames.size() >= 2 ? 1 : -1;
+
+    if (streaming) {
+        auto indexOf = [this] (const std::string& name) {
+            for (size_t i = 0; i < outputNames.size(); ++i)
+                if (outputNames[i] == name) return (int) i;
+            return -1;
+        };
+        audioOutputIndex = juce::jmax(0, indexOf("audio"));
+        latentOutputIndex = indexOf("latent");
+
+        for (size_t i = 1; i < inputNames.size(); ++i) {
+            State state;
+            state.inputName = inputNames[i];
+            state.outputName = "new_" + inputNames[i];
+            state.outputIndex = indexOf(state.outputName);
+            state.shape = session.GetInputTypeInfo(i).GetTensorTypeAndShapeInfo().GetShape();
+            size_t size = 1;
+            for (auto& d : state.shape) {
+                if (d < 0) d = 1;
+                size *= (size_t) d;
+            }
+            state.data.assign(size, 0.f);
+            states.push_back(std::move(state));
+        }
+
+        // chunk length at the model's rate, fixed by the export
+        const auto inputShape = session.GetInputTypeInfo(0).GetTensorTypeAndShapeInfo().GetShape();
+        if (inputShape.size() == 3 && inputShape[2] > 0)
+            modelInputSizeChanged((int) inputShape[2]);
+    } else if (modelInputSize != 16384) {
+        modelInputSizeChanged(16384);
+    }
+
+    hasLatentOutput = latentOutputIndex >= 0;
+}
+
+void InferenceThread::resetStates() {
+    for (auto& state : states)
+        std::fill(state.data.begin(), state.data.end(), 0.f);
+}
+
+void InferenceThread::runStreaming() {
+    Ort::MemoryInfo memoryInfo = Ort::MemoryInfo::CreateCpu(OrtDeviceAllocator, OrtMemTypeCPU);
+
+    std::vector<Ort::Value> inputs;
+    std::vector<const char*> inputNamePointers;
+    inputs.reserve(states.size() + 1);
+
+    const std::array<int64_t, 3> inputShape = {1, 1, modelInputSize};
+    inputs.push_back(Ort::Value::CreateTensor<float>(memoryInfo, onnxInputData.data(), (size_t) modelInputSize,
+                                                     inputShape.data(), inputShape.size()));
+    inputNamePointers.push_back(inputNames[0].c_str());
+    for (auto& state : states) {
+        inputs.push_back(Ort::Value::CreateTensor<float>(memoryInfo, state.data.data(), state.data.size(),
+                                                         state.shape.data(), state.shape.size()));
+        inputNamePointers.push_back(state.inputName.c_str());
+    }
+
+    std::vector<const char*> outputNamePointers;
+    for (auto& name : outputNames) outputNamePointers.push_back(name.c_str());
+
+    try {
+        auto outputs = session.Run(runOptions, inputNamePointers.data(), inputs.data(), inputs.size(),
+                                   outputNamePointers.data(), outputNamePointers.size());
+
+        const float* audio = outputs[(size_t) audioOutputIndex].GetTensorData<float>();
+        const auto audioCount = outputs[(size_t) audioOutputIndex].GetTensorTypeAndShapeInfo().GetElementCount();
+        for (int i = 0; i < modelInputSize; ++i)
+            onnxOutputData[(size_t) i] = (size_t) i < audioCount ? audio[i] : 0.f;
+
+        if (latentOutputIndex >= 0 && onNewLatentFrames) {
+            auto latentShape = outputs[(size_t) latentOutputIndex].GetTensorTypeAndShapeInfo().GetShape();
+            if (latentShape.size() == 3)
+                onNewLatentFrames(outputs[(size_t) latentOutputIndex].GetTensorData<float>(),
+                                  (int) latentShape[1], (int) latentShape[2]);
+        }
+
+        // the caches for the next chunk
+        for (auto& state : states) {
+            if (state.outputIndex < 0) continue;
+            const auto& value = outputs[(size_t) state.outputIndex];
+            const auto count = juce::jmin(value.GetTensorTypeAndShapeInfo().GetElementCount(), state.data.size());
+            std::copy_n(value.GetTensorData<float>(), count, state.data.begin());
+        }
+    } catch (Ort::Exception& e) {
+        std::cout << e.what() << std::endl;
+        std::fill(onnxOutputData.begin(), onnxOutputData.end(), 0.f);
+    }
+
+    for (int i = 0; i < processedBuffer.getNumSamples(); ++i)
+        processedBuffer.setSample(0, i, onnxOutputData[(size_t) i]);
+
+    onNewProcessedBuffer(processedBuffer);
 }
 
 int InferenceThread::getLatency(){
-    return modelInputSize + maxModelCalcSize;
+    // the same for every model (Scyclone's are 16384 samples long), so the plugin's latency
+    // doesn't change with the model; streaming models use shorter chunks inside it
+    return 16384 + maxModelCalcSize;
 }
 
 void InferenceThread::setInternalModel() {

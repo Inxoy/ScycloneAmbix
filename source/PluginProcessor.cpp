@@ -40,16 +40,12 @@ AudioPluginAudioProcessor::AudioPluginAudioProcessor()
     onnxProcessor1.onOnnxModelLoad = [this] (bool initLoading, juce::String modelName) {
         this->suspendProcessing(initLoading);
 //        std::cout << "Onnx proc 1 suspend:" << initLoading << std::endl; //DBG
-        if (!initLoading && modelName != "") {
-            setExternalModelName(1, modelName);
-        }
+        if (!initLoading && modelName != "") modelLoaded(1, modelName);
     };
     onnxProcessor2.onOnnxModelLoad = [this] (bool initLoading, juce::String modelName) {
         this->suspendProcessing(initLoading);
 //        std::cout << "Onnx proc 2 suspend:" << initLoading << std::endl; //DBG
-        if (!initLoading && modelName != "") {
-            setExternalModelName(2, modelName);
-        }
+        if (!initLoading && modelName != "") modelLoaded(2, modelName);
     };
 
     setInitialMuteParameters();
@@ -370,7 +366,34 @@ void AudioPluginAudioProcessor::setStateInformation (const void* data, int sizeI
                                                             .getPropertyAsValue(PluginParameters::NETWORK1_NAME_NAME, nullptr));
             network2Name.referTo(parameters.state.getChildWithName("Settings")
                                                             .getPropertyAsValue(PluginParameters::NETWORK2_NAME_NAME, nullptr));
+            restoreModels();
         }
+}
+
+void AudioPluginAudioProcessor::selectModel(int network, int index) {
+    auto& onnx = network == 1 ? onnxProcessor1 : onnxProcessor2;
+    onnx.loadLibraryModel(index);
+}
+
+void AudioPluginAudioProcessor::modelLoaded(int network, const juce::String& modelName) {
+    loadedModelName[network == 1 ? 0 : 1] = modelName;
+    // stored in the "Settings" child, so the session reopens with the same networks
+    (network == 1 ? network1Name : network2Name) = modelName;
+    if (setExternalModelName) {
+        auto name = modelName;
+        setExternalModelName(network, name);
+    }
+    if (onModelChanged) onModelChanged();
+}
+
+void AudioPluginAudioProcessor::restoreModels() {
+    // library models are restored by name, files picked by hand are not (as before)
+    for (int network = 1; network <= 2; ++network) {
+        const auto wanted = (network == 1 ? network1Name : network2Name).toString();
+        const int index = ModelLibrary::indexOf(wanted);
+        if (index >= 0 && wanted != loadedModelName[network - 1])
+            selectModel(network, index);
+    }
 }
 
 void AudioPluginAudioProcessor::parameterChanged(const juce::String &parameterID, float newValue) {

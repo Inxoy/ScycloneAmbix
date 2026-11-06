@@ -10,6 +10,8 @@
 #include "InferenceThread.h"
 #include "../../PluginParameters.h"
 #include "WarningWindow.h"
+#include "ModelLibrary.h"
+#include "StreamingResampler.h"
 
 class OnnxProcessor {
 public:
@@ -20,6 +22,8 @@ public:
     void processBlock(juce::AudioBuffer<float>& buffer);
     int getLatency() const;
     void loadExternalModel(juce::File path);
+    // index into ModelLibrary::getEntries()
+    bool loadLibraryModel(int index);
 
     // latent frame that belongs to the audio returned by the last processBlock call
     const std::vector<float>& getCurrentLatent() const;
@@ -31,6 +35,11 @@ public:
 
 private:
     void processOutput(juce::AudioBuffer<float>& buffer, int numSamples);
+    // streaming models (converted RAVE exports) run at their own rate and are delayed by
+    // exactly the reported latency
+    void configureStreaming();
+    void processStreaming(juce::AudioBuffer<float>& buffer, int numSamples);
+    void pushProcessed(const juce::AudioBuffer<float>& modelRateBuffer);
     void advanceLatent(int numSamples);
     void calculateLatency(int maxSamplesPerBuffer);
 
@@ -51,6 +60,14 @@ private:
     std::unique_ptr<juce::FileChooser> fc;
     WarningWindow warningWindow;
     int number;
+
+    std::atomic<bool> streaming {false};
+    double hostSampleRate = 48000.0;
+    int maxBlockSize = 512;
+    StreamingResampler inputResampler, outputResampler;
+    juce::AudioBuffer<float> modelRateBlock;     // host block converted to the model's rate
+    std::vector<float> hostRateChunk;            // a processed chunk converted back
+    std::atomic<int> modelLatentHop {0};
 };
 
 #endif //VAESYNTH_ONNXPROCESSOR_H

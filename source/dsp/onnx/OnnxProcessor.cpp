@@ -7,6 +7,10 @@
 OnnxProcessor::OnnxProcessor(juce::AudioProcessorValueTreeState &apvts, int no, RaveModel raveModel) : inferenceThread(raveModel), number(no), parameters(apvts)
 {
     inferenceThread.onNewProcessedBuffer = [this] (juce::AudioBuffer<float> buffer) {
+        if (streaming) {
+            pushProcessed(buffer);
+            return 0;
+        }
         for (int sample = 0; sample < buffer.getNumSamples(); ++sample) {
             receiveRingBuffer.pushSample(buffer.getSample(0, sample), 0);
         }
@@ -21,7 +25,9 @@ OnnxProcessor::OnnxProcessor(juce::AudioProcessorValueTreeState &apvts, int no, 
                 latentRingBuffer.pushSample(latent[dim * numFrames + frame], dim);
             }
         }
-        latentHopSize = inferenceThread.getModelInputSize() / numFrames;
+        const int hop = inferenceThread.getModelInputSize() / numFrames;
+        // the hop in host samples: streaming models run at their own rate
+        latentHopSize = streaming ? juce::roundToInt(hop * hostSampleRate / inferenceThread.getModelSampleRate()) : hop;
         numLatentDimensions = dims;
     };
 
@@ -33,6 +39,7 @@ OnnxProcessor::OnnxProcessor(juce::AudioProcessorValueTreeState &apvts, int no, 
         samplesUntilNextLatentFrame = 0;
         std::fill(currentLatent.begin(), currentLatent.end(), 0.f);
         inferenceCounter = 0;
+        configureStreaming();
     };
 }
 
@@ -67,16 +74,71 @@ void OnnxProcessor::prepare(const juce::dsp::ProcessSpec &spec) {
     inferenceThread.prepare(spec);
     inferenceCounter = 0;
     calculateLatency((int)spec.maximumBlockSize);
+    hostSampleRate = spec.sampleRate;
+    maxBlockSize = (int) spec.maximumBlockSize;
+    configureStreaming();
 
-    if (spec.sampleRate != 48000.0) {
+    // Scyclone's own models are made for 48 kHz; streaming models are resampled
+    if (spec.sampleRate != 48000.0 && !streaming) {
         warningWindow.showWarningWindow(SampleRateWarning);
     }
 }
 
+void OnnxProcessor::configureStreaming() {
+    streaming = inferenceThread.isStreaming();
+    if (!streaming) return;
+
+    const double modelRate = inferenceThread.getModelSampleRate();
+    const int chunk = inferenceThread.getModelInputSize();
+    inputResampler.prepare(hostSampleRate, modelRate, juce::jmax(maxBlockSize, 4096));
+    outputResampler.prepare(modelRate, hostSampleRate, chunk);
+    modelRateBlock.setSize(1, inputResampler.maxOutput(juce::jmax(maxBlockSize, 4096)), false, true, false);
+    hostRateChunk.assign((size_t) outputResampler.maxOutput(chunk), 0.f);
+
+    // the output starts exactly the reported latency late; the latent frames as well
+    receiveRingBuffer.reset();
+    latentRingBuffer.reset();
+    for (int i = 0; i < latencyInSamples; ++i) receiveRingBuffer.pushSample(0.f, 0);
+    samplesUntilNextLatentFrame = latencyInSamples;
+}
+
 void OnnxProcessor::processBlock(juce::AudioBuffer<float> &buffer) {
     const int numSamples = buffer.getNumSamples();
+    if (streaming) {
+        processStreaming(buffer, numSamples);
+        return;
+    }
     inferenceThread.sendAudio(buffer);
     processOutput(buffer, numSamples);
+}
+
+void OnnxProcessor::processStreaming(juce::AudioBuffer<float>& buffer, int numSamples) {
+    // to the model's rate; the inference thread collects whole chunks
+    int done = 0;
+    while (done < numSamples) {
+        const int n = juce::jmin(4096, numSamples - done);
+        const int produced = inputResampler.process(buffer.getReadPointer(0, done), n,
+                                                    modelRateBlock.getWritePointer(0), modelRateBlock.getNumSamples());
+        if (produced > 0) {
+            juce::AudioBuffer<float> view(modelRateBlock.getArrayOfWritePointers(), 1, produced);
+            inferenceThread.sendAudio(view);
+        }
+        done += n;
+    }
+
+    // processed audio, delayed by the latency the plugin reports
+    const int available = receiveRingBuffer.getAvailableSamples(0);
+    const int fromModel = juce::jmin(available, numSamples);
+    advanceLatent(fromModel);
+    for (int i = 0; i < fromModel; ++i) buffer.setSample(0, i, receiveRingBuffer.popSample(0));
+    for (int i = fromModel; i < numSamples; ++i) buffer.setSample(0, i, 0.f);    // the model is late
+}
+
+void OnnxProcessor::pushProcessed(const juce::AudioBuffer<float>& modelRateBuffer) {
+    // called on the inference thread: back to the host's rate
+    const int produced = outputResampler.process(modelRateBuffer.getReadPointer(0), modelRateBuffer.getNumSamples(),
+                                                 hostRateChunk.data(), (int) hostRateChunk.size());
+    for (int i = 0; i < produced; ++i) receiveRingBuffer.pushSample(hostRateChunk[(size_t) i], 0);
 }
 
 void OnnxProcessor::processOutput(juce::AudioBuffer<float> &buffer, const int numSamples) {
@@ -137,6 +199,21 @@ int OnnxProcessor::getNumLatentDimensions() const {
 void OnnxProcessor::loadExternalModel(juce::File file) {
     onOnnxModelLoad(true, file.getFileNameWithoutExtension());
     inferenceThread.setExternalModel(file);
+}
+
+bool OnnxProcessor::loadLibraryModel(int index) {
+    const auto& entries = ModelLibrary::getEntries();
+    if (!juce::isPositiveAndBelow(index, entries.size())) return false;
+    const auto& entry = entries.getReference(index);
+    if (entry.embedded) {
+        onOnnxModelLoad(true, entry.name);
+        inferenceThread.setEmbeddedModel(entry.embeddedModel, entry.name);
+        return true;
+    }
+    if (!entry.file.existsAsFile()) return false;
+    onOnnxModelLoad(true, entry.name);
+    inferenceThread.setExternalModel(entry.file, entry.name);
+    return true;
 }
 
 void OnnxProcessor::calculateLatency(int maxSamplesPerBuffer) {

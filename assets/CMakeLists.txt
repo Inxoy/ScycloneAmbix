@@ -8,6 +8,9 @@ juce_add_binary_data(BinaryData SOURCES
         fonts/Inter-Bold.ttf
         fonts/Inter-Regular.ttf
         fonts/Inter-Medium.ttf
+        fonts/RysumFell-Roman.ttf
+        fonts/RysumFell-Italic.ttf
+        textures/grain.png
 
         svg/ui_background.svg
         svg/Octagon.svg
